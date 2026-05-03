@@ -63,7 +63,7 @@ build_single() {
             ARCHIVE_NAME="${PROJECT_NAME}_linux_amd64"
             ;;
         "386")
-            ARCHIVE_NAME="${PROJECT_NAME}_linux_386"
+            ARCHIVE_NAME="${PROJECT_NAME}_linux_i386"
             ;;
         "arm")
             ARCHIVE_NAME="${PROJECT_NAME}_linux_armv7"
