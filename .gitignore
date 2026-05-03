@@ -1,6 +1,6 @@
 # 编译输出
 build/
-groot
+/groot
 
 # 临时文件
 *.tmp
