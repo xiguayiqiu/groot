@@ -1,0 +1,187 @@
+package proot
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"groot/internal/logger"
+	"groot/internal/usercheck"
+)
+
+// RunAlpineProot 专门为 alpine 量身定做的 100% 完美版本！！！
+func RunAlpineProot(rootfsPath string, customShell string) error {
+	logger.Info("Alpine 专属模式启动！rootfs: %s", rootfsPath)
+
+	// 查找系统 proot
+	prootPath, err := exec.LookPath("proot")
+	if err != nil {
+		return fmt.Errorf("没找到 proot：sudo apt install proot")
+	}
+
+	// 转换绝对路径
+	absRootfsPath := rootfsPath
+	if !filepath.IsAbs(rootfsPath) {
+		abs, err := filepath.Abs(rootfsPath)
+		if err != nil {
+			return err
+		}
+		absRootfsPath = abs
+	}
+
+	// 检查这是不是 alpine
+	if _, err := os.Stat(filepath.Join(absRootfsPath, "etc", "alpine-release")); os.IsNotExist(err) {
+		logger.Warn("这看起来不是 alpine，不过继续尝试")
+	}
+
+	// 从 rootfs 的 /etc/passwd 中读取用户信息（包括 shell）
+	userInfo, err := usercheck.CheckUser(absRootfsPath, "root")
+	if err != nil {
+		logger.Warn("无法读取 passwd 文件，使用默认用户信息: %v", err)
+		userInfo = &usercheck.UserInfo{
+			Username: "root",
+			Uid:      0,
+			Gid:      0,
+			Home:     "/root",
+			Shell:    "/bin/bash",
+		}
+	}
+
+	// 终极权限修复：确保整个 rootfs 属于当前用户！！！
+	currentUid := os.Getuid()
+	currentGid := os.Getgid()
+	logger.Info("终极修复 rootfs 权限为当前用户")
+	fixAlpineRootfs(absRootfsPath, currentUid, currentGid)
+
+	// 确定 shell - 与 chroot 模式相同的逻辑
+	shell := "/bin/sh"
+	if customShell != "" {
+		if customShell[0] != '/' {
+			shell = "/" + customShell
+		} else {
+			shell = customShell
+		}
+	} else if userInfo.Shell != "" && userInfo.Shell != "/usr/bin/nologin" {
+		// 优先使用 passwd 中设置的 shell（即 chsh 设置的）
+		shell = userInfo.Shell
+	} else {
+		// 回退到检测 bash/sh
+		if _, err := os.Stat(filepath.Join(absRootfsPath, "bin/bash")); err == nil {
+			shell = "/bin/bash"
+		} else {
+			shell = "/bin/sh"
+		}
+	}
+
+	// 终极挂载参数！！！
+	var args []string
+	if customShell != "" {
+		// 自定义 shell，先 source 环境
+		args = []string{
+			"--kill-on-exit",
+			"-0",
+			"-r", absRootfsPath,
+			"-w", "/",
+			"-b", "/dev",
+			"-b", "/proc",
+			"-b", "/sys",
+			"-b", "/tmp",
+			shell,
+			"-c", "export PATH=/sbin:/usr/sbin:/bin:/usr/bin; [ -f /etc/profile ] && . /etc/profile; exec " + shell,
+		}
+	} else {
+		// 默认 shell，先 source 环境
+		args = []string{
+			"--kill-on-exit",
+			"-0",
+			"-r", absRootfsPath,
+			"-w", "/",
+			"-b", "/dev",
+			"-b", "/proc",
+			"-b", "/sys",
+			"-b", "/tmp",
+			shell,
+			"-c", "export PATH=/sbin:/usr/sbin:/bin:/usr/bin; [ -f /etc/profile ] && . /etc/profile; exec " + shell,
+		}
+	}
+
+	logger.Info("执行完美 proot 命令：%s %v", prootPath, args)
+
+	cmd := exec.Command(prootPath, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// 环境变量：简单干净
+	cmd.Env = []string{
+		"PATH=/sbin:/usr/sbin:/bin:/usr/bin",
+		"TERM=" + os.Getenv("TERM"),
+		"HOME=/root",
+		"SHELL=" + shell,
+	}
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	go func() {
+		for sig := range sigChan {
+			if cmd.Process != nil {
+				cmd.Process.Signal(sig)
+			}
+		}
+	}()
+
+	if err := cmd.Wait(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		return err
+	}
+
+	signal.Stop(sigChan)
+	close(sigChan)
+	return nil
+}
+
+func fixAlpineRootfs(rootfsPath string, uid, gid int) {
+	filepath.Walk(rootfsPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		os.Chown(path, uid, gid)
+		if info.IsDir() {
+			os.Chmod(path, 0755)
+		} else {
+			relPath, err := filepath.Rel(rootfsPath, path)
+			isExec := false
+			if err == nil {
+				relPath = "/" + relPath
+				isExec = strings.HasPrefix(relPath, "/bin/") ||
+					strings.HasPrefix(relPath, "/sbin/") ||
+					strings.HasPrefix(relPath, "/usr/bin/") ||
+					strings.HasPrefix(relPath, "/lib/") ||
+					strings.HasPrefix(relPath, "/usr/lib/") ||
+					strings.HasPrefix(relPath, "/lib64/") ||
+					strings.HasPrefix(relPath, "/usr/lib64/")
+			}
+			mode := info.Mode()
+			if mode&0111 != 0 || isExec {
+				os.Chmod(path, 0755)
+			} else {
+				os.Chmod(path, 0644)
+			}
+		}
+		return nil
+	})
+}

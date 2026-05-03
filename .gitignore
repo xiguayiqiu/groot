@@ -1,0 +1,17 @@
+# 编译输出
+build/
+groot
+
+# 临时文件
+*.tmp
+*.swp
+*.swo
+*~
+
+# rootfs 文件（包含下载的镜像和运行时目录）
+rootfs/
+downloads/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
