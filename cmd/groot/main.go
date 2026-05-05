@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"groot/internal/chroot"
 	"groot/internal/images"
@@ -17,8 +18,57 @@ import (
 )
 
 const (
-	version = "0.1"
+	version = "0.2"
 )
+
+func detectDistro() string {
+	fileExists := func(path string) bool {
+		_, err := os.Stat(path)
+		return err == nil
+	}
+
+	if fileExists("/etc/void-release") {
+		return "void"
+	}
+	if fileExists("/etc/alpine-release") {
+		return "alpine"
+	}
+	if fileExists("/etc/arch-release") {
+		return "arch"
+	}
+	if fileExists("/etc/debian_version") {
+		return "debian"
+	}
+	if fileExists("/etc/os-release") {
+		data, err := os.ReadFile("/etc/os-release")
+		if err == nil {
+			strData := string(data)
+			if strings.Contains(strData, "ID=void") ||
+				strings.Contains(strData, "ID=\"void\"") ||
+				strings.Contains(strData, "Void Linux") {
+				return "void"
+			}
+			if strings.Contains(strData, "ID=alpine") ||
+				strings.Contains(strData, "ID=\"alpine\"") {
+				return "alpine"
+			}
+			if strings.Contains(strData, "ID=arch") ||
+				strings.Contains(strData, "ID=\"arch\"") {
+				return "arch"
+			}
+			if strings.Contains(strData, "ID=debian") ||
+				strings.Contains(strData, "ID=\"debian\"") ||
+				strings.Contains(strData, "ID=ubuntu") ||
+				strings.Contains(strData, "ID=\"ubuntu\"") {
+				return "debian"
+			}
+		}
+	}
+	if fileExists("/usr/bin/xbps-install") {
+		return "void"
+	}
+	return "unknown"
+}
 
 func main() {
 	// 处理内部子命令和版本参数
@@ -54,12 +104,12 @@ func main() {
 		Name:        "groot",
 		Usage:       "Go 版双模式隔离工具（chroot/proot）",
 		Version:     version,
-		Copyright:   "MIT License - Copyright © 2025 弈秋忘忧白帽",
+		Copyright:   "MIT License - Copyright © 2026 弈秋忘忧白帽",
 		HideVersion: true,
 		Commands: []*cli.Command{
 			{
 				Name:  "pm",
-				Usage: "包管理器：管理 rootfs 镜像下载",
+				Usage: "包管理器：管理 rootfs 镜像下载和构建",
 				Subcommands: []*cli.Command{
 					{
 						Name:  "list",
@@ -131,6 +181,78 @@ func main() {
 							return images.InteractiveDownload(cfg, destDir)
 						},
 					},
+					{
+						Name:  "make",
+						Usage: "构建 rootfs 镜像",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:  "distro",
+								Usage: "指定发行版（debian/ubuntu/arch/alpine/void）",
+							},
+							&cli.StringFlag{
+								Name:  "version",
+								Usage: "指定发行版版本（如 12 对于 Debian, 22.04 对于 Ubuntu, v3.20 对于 Alpine, x86_64 对于 Void）",
+							},
+							&cli.StringFlag{
+								Name:  "arch",
+								Usage: "指定架构（amd64/aarch64）",
+								Value: "amd64",
+							},
+							&cli.StringFlag{
+								Name:  "type",
+								Usage: "指定构建类型：minimal（精简版）、standard（标准版）、full（完整版）（可选，默认 standard）",
+								Value: "standard",
+							},
+							&cli.StringFlag{
+								Name:  "dest",
+								Usage: "指定构建目录",
+								Value: "rootfs",
+							},
+							&cli.StringFlag{
+								Name:  "mirror",
+								Usage: "指定镜像源：tsinghua（清华）、ustc（中科大）、official（官方）或自定义 URL（可选，默认 official）",
+							},
+						},
+						Action: func(cCtx *cli.Context) error {
+							destDir := cCtx.String("dest")
+							if !filepath.IsAbs(destDir) {
+								wd, err := os.Getwd()
+								if err != nil {
+									return err
+								}
+								destDir = filepath.Join(wd, destDir)
+							}
+
+							// 如果没有通过命令行参数提供完整信息，进入交互式模式
+							distro := cCtx.String("distro")
+							if distro == "" {
+								return images.InteractiveMakeRootfs(destDir)
+							}
+
+							// 解析构建类型
+							var buildType images.BuildType
+							typeStr := cCtx.String("type")
+							switch typeStr {
+							case "minimal":
+								buildType = images.BuildTypeMinimal
+							case "full":
+								buildType = images.BuildTypeFull
+							default:
+								buildType = images.BuildTypeStandard
+							}
+
+							config := images.BuildConfig{
+								Distro:  distro,
+								Version: cCtx.String("version"),
+								Arch:    cCtx.String("arch"),
+								DestDir: destDir,
+								Mirror:  cCtx.String("mirror"),
+								Type:    buildType,
+							}
+
+							return images.MakeRootfs(config)
+						},
+					},
 				},
 			},
 		},
@@ -147,7 +269,7 @@ func main() {
 			},
 			&cli.StringFlag{
 				Name:  "z",
-				Usage: "专属 proot 兼容模式：指定发行版（alpine/debian/ubuntu），然后指定 rootfs 目录",
+				Usage: "专属 proot 兼容模式：指定发行版（alpine/debian），然后指定 rootfs 目录",
 			},
 			&cli.StringFlag{
 				Name:  "b",
@@ -184,12 +306,8 @@ func main() {
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.Bool("v") || cCtx.Bool("version") {
 				fmt.Printf("groot version %s\n", version)
-				fmt.Println("MIT License - Copyright © 2025 弈秋忘忧白帽")
+				fmt.Println("MIT License - Copyright © 2026 弈秋忘忧白帽")
 				return nil
-			}
-
-			if cCtx.NArg() > 0 {
-				return cli.ShowAppHelp(cCtx)
 			}
 
 			chrootPath := cCtx.String("c")
@@ -200,53 +318,128 @@ func main() {
 			listDistros := cCtx.Bool("l")
 			args := cCtx.Args()
 
+			if cCtx.NArg() > 0 {
+				if prootDistro == "" && chrootPath == "" && prootPath == "" && cleanupPath == "" && !listDistros {
+					return cli.ShowAppHelp(cCtx)
+				}
+			}
+
 			if listDistros {
 				// 检查 whiptail 是否可用
 				whiptailPath, err := exec.LookPath("whiptail")
 				if err != nil {
-					// 回退到文本显示
-					fmt.Println("支持的发行版列表：")
-					fmt.Println()
-					fmt.Println("| 发行版   | proot | chroot                |")
-					fmt.Println("| :------- | :---- | :-------------------- |")
-					fmt.Println("| Alpine   | ✓     | ✓                     |")
-					fmt.Println("| Debian   | ✓     | ✓                     |")
-					fmt.Println("| Void     | -     | ✓                     |")
-					fmt.Println("| Ubuntu   | -     | ✓                     |")
-					fmt.Println("| Kali     | -     | ✓                     |")
-					fmt.Println("| RedHat   | -     | ✓                     |")
-					fmt.Println("| Fedora   | -     | ✓                     |")
-					fmt.Println("| CentOS   | -     | ✓                     |")
-					fmt.Println("| Arch     | -     | ✓                     |")
-					fmt.Println()
-					fmt.Println("说明：")
-					fmt.Println("  ✓ 完美支持")
-					fmt.Println("  - 仅 chroot 模式支持")
-					fmt.Println()
-					return nil
+					// 尝试安装 whiptail
+					fmt.Println("提示: whiptail 没有找到，尝试安装它以获得更好的交互体验...")
+					distro := detectDistro()
+					fmt.Printf("检测到当前系统是: %s\n", distro)
+					installed := false
+					switch distro {
+					case "alpine":
+						if _, err := exec.LookPath("apk"); err == nil {
+							cmd := exec.Command("apk", "add", "--no-cache", "newt")
+							cmd.Stdout = os.Stdout
+							cmd.Stderr = os.Stderr
+							if err := cmd.Run(); err == nil {
+								installed = true
+							}
+						}
+					case "void":
+						if _, err := exec.LookPath("xbps-install"); err == nil {
+							fmt.Println("找到 xbps-install，正在安装 newt 包...")
+							cmd := exec.Command("xbps-install", "-Sy", "newt")
+							cmd.Stdout = os.Stdout
+							cmd.Stderr = os.Stderr
+							cmd.Stdin = os.Stdin
+							if err := cmd.Run(); err == nil {
+								installed = true
+							} else {
+								fmt.Printf("安装 newt 失败: %v\n", err)
+							}
+						} else {
+							fmt.Printf("未找到 xbps-install: %v\n", err)
+						}
+					case "debian":
+						if _, err := exec.LookPath("apt"); err == nil {
+							fmt.Println("找到 apt，正在安装 newt 包...")
+							cmd := exec.Command("apt", "install", "-y", "newt")
+							cmd.Stdout = os.Stdout
+							cmd.Stderr = os.Stderr
+							cmd.Stdin = os.Stdin
+							if err := cmd.Run(); err == nil {
+								installed = true
+							}
+						}
+					case "arch":
+						if _, err := exec.LookPath("pacman"); err == nil {
+							fmt.Println("找到 pacman，正在安装 newt 包...")
+							cmd := exec.Command("pacman", "-S", "--noconfirm", "newt")
+							cmd.Stdout = os.Stdout
+							cmd.Stderr = os.Stderr
+							cmd.Stdin = os.Stdin
+							if err := cmd.Run(); err == nil {
+								installed = true
+							}
+						}
+					}
+
+					if installed {
+						whiptailPath, err = exec.LookPath("whiptail")
+					}
+
+					if err != nil {
+						// 回退到文本显示
+						fmt.Println("将使用文本交互模式")
+						fmt.Println()
+						fmt.Println("支持的发行版列表：")
+						fmt.Println()
+						fmt.Println("=== download 方式（pm download） ===")
+						fmt.Println("| 发行版   | proot | chroot                |")
+						fmt.Println("| :------- | :---- | :-------------------- |")
+						fmt.Println("| Alpine   | ✓     | ✓                     |")
+						fmt.Println("| Ubuntu   | -     | ✓                     |")
+						fmt.Println("| Void     | -     | ✓                     |")
+						fmt.Println()
+						fmt.Println("=== make 方式（pm make） ===")
+						fmt.Println("| 发行版   | proot | chroot                |")
+						fmt.Println("| :------- | :---- | :-------------------- |")
+						fmt.Println("| Debian   | ✓     | ✓                     |")
+						fmt.Println("| Ubuntu   | -     | ✓                     |")
+						fmt.Println("| Arch     | -     | ✓ (仅在 Arch 系统有效)|")
+						fmt.Println()
+						fmt.Println("说明：")
+						fmt.Println("  ✓ 完美支持")
+						fmt.Println("  - 仅 chroot 模式支持")
+						fmt.Println()
+						return nil
+					}
 				}
 
 				// 使用 whiptail 显示
 				msg := `支持的发行版列表
-|------------------------------------------|
-| 发行版   | proot | chroot                |
-| -------- | ----- | ----------------------|
-| Alpine   | ✓     | ✓                     |
-| Debian   | ✓     | ✓                     |
-| Void     | -     | ✓                     |
-| Ubuntu   | -     | ✓                     |
-| Kali     | -     | ✓                     |
-| RedHat   | -     | ✓                     |
-| Fedora   | -     | ✓                     |
-| CentOS   | -     | ✓                     |
-| Arch     | -     | ✓                     |
---------------------------------------------
++------------------------------+
+| download 方式（pm download） |
++------------------------------+
+| 发行版   | proot | chroot    |
++--------- + ----- + ----------+
+| Alpine   | ✓     | ✓         |
+| Ubuntu   | -     | ✓         |
+| Void     | -     | ✓         |
++------------------------------+
+| make 方式（pm make）         |
++------------------------------+
+| 发行版   | proot | chroot    |
++--------- + ----- + ----------+
+| Debian   | ✓     | ✓         |
+| Ubuntu   | -     | ✓         |
+| Arch     | -     | ✓         |
++------------------------------+
 
 说明：
   ✓ 完美支持
-  - 仅 chroot 模式支持`
+  - 仅 chroot 模式支持
+  Arch 构建仅在 Arch Linux 系统有效`
 
-				cmd := exec.Command(whiptailPath, "--title", "Groot 发行版支持列表", "--msgbox", msg, "28", "55")
+				cmd := exec.Command(whiptailPath, "--title", "Groot 发行版支持列表", "--msgbox", msg, "35", "60")
 				cmd.Stdin = os.Stdin
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
@@ -298,10 +491,8 @@ func main() {
 					return proot.RunAlpineProot(rootfsPath, customShell)
 				case "debian":
 					return proot.Run(rootfsPath, customShell)
-				case "ubuntu":
-					return proot.RunUbuntuProot(rootfsPath, customShell)
 				default:
-					return fmt.Errorf("不支持的发行版：%s，当前支持 alpine、debian 和 ubuntu", prootDistro)
+					return fmt.Errorf("不支持的发行版：%s，当前支持 alpine 和 debian", prootDistro)
 				}
 			}
 
@@ -317,7 +508,7 @@ func main() {
 
 func runChroot(rootfsPath string, customShell string) error {
 	if !permission.IsRoot() {
-		logger.Info("使用 User Namespace，无需真实 root 权限")
+		return fmt.Errorf("-c 参数（chroot）必须以 root 身份运行，请使用 sudo 或切换到 root 用户")
 	}
 
 	return chroot.Run(rootfsPath, customShell)

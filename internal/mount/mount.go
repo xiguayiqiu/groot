@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -13,6 +14,25 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/moby/sys/mountinfo"
 )
+
+// isArchLinux 检测 rootfs 是否是 Arch Linux
+func isArchLinux(rootfsPath string) bool {
+	// 检查 /etc/os-release 文件
+	osReleasePath := filepath.Join(rootfsPath, "etc", "os-release")
+	data, err := os.ReadFile(osReleasePath)
+	if err == nil {
+		content := string(data)
+		if strings.Contains(content, "ID=arch") ||
+			strings.Contains(content, "NAME=Arch") ||
+			strings.Contains(content, "NAME=EndeavourOS") ||
+			strings.Contains(content, "NAME=Manjaro") {
+			return true
+		}
+	}
+	// 检查 /etc/arch-release 文件
+	_, err = os.Stat(filepath.Join(rootfsPath, "etc", "arch-release"))
+	return err == nil
+}
 
 // 定义需要挂载的虚拟文件系统
 var mountPoints = []struct {
@@ -75,8 +95,16 @@ func MountAll(rootfsPath string) ([]string, error) {
 		logger.Warn("准备目录失败: %v", err)
 	}
 
+	archRootfs := isArchLinux(rootfsPath)
+
 	for _, mp := range mountPoints {
 		target := filepath.Join(rootfsPath, mp.target)
+
+		// Arch Linux 跳过 /etc/mtab bind mount，用静态文件替代
+		if archRootfs && mp.target == "etc/mtab" {
+			logger.Debug("Arch Linux: 跳过 /etc/mtab bind mount")
+			continue
+		}
 
 		// 检查是否已挂载
 		if isMounted(target) {
@@ -171,6 +199,40 @@ func MountAll(rootfsPath string) ([]string, error) {
 	if _, err := os.Lstat(ptmxPath); os.IsNotExist(err) {
 		if err := os.Symlink("pts/ptmx", ptmxPath); err != nil {
 			logger.Warn("创建 ptmx 符号链接失败: %v", err)
+		}
+	}
+
+	// Arch Linux 特殊处理
+	if isArchLinux(rootfsPath) {
+		logger.Info("检测到 Arch Linux，设置 pacman 专用目录...")
+
+		// 确保 pacman 缓存目录存在
+		pacmanCache := filepath.Join(rootfsPath, "var/cache/pacman/pkg")
+		if err := os.MkdirAll(pacmanCache, 0755); err != nil {
+			logger.Warn("创建 pacman 缓存目录失败: %v", err)
+		} else {
+			// 确保权限正确
+			if err := os.Chmod(pacmanCache, 0755); err != nil {
+				logger.Debug("修改缓存目录权限失败: %v", err)
+			}
+			logger.Debug("已创建 pacman 缓存目录: %s", pacmanCache)
+		}
+
+		// 确保 pacman 数据库目录存在
+		pacmanDB := filepath.Join(rootfsPath, "var/lib/pacman")
+		if err := os.MkdirAll(filepath.Join(pacmanDB, "sync"), 0755); err != nil {
+			logger.Warn("创建 pacman sync 目录失败: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Join(pacmanDB, "local"), 0755); err != nil {
+			logger.Warn("创建 pacman local 目录失败: %v", err)
+		}
+
+		// 创建 ALPM 数据库版本标记（如果不存在）
+		alpmVersion := filepath.Join(pacmanDB, "local/ALPM_DB_VERSION")
+		if _, err := os.Stat(alpmVersion); os.IsNotExist(err) {
+			if err := os.WriteFile(alpmVersion, []byte("9\n"), 0644); err != nil {
+				logger.Debug("创建 ALPM_DB_VERSION 失败: %v", err)
+			}
 		}
 	}
 

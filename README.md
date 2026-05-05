@@ -6,27 +6,33 @@ groot 是一个基于 Go 语言开发的轻量级隔离工具，支持 chroot �
 
 groot 提供一站式 Linux 容器环境解决方案，从镜像下载到环境运行，全程无压力。
 
-### ✨ 新增：pm 子命令 - 一键下载 rootfs 镜像
+### ✨ 新增：pm 子命令 - 镜像管理与构建
 
 - **`pm list`** - 列出可用的 rootfs 镜像
 - **`pm download`** - 下载 rootfs 镜像
   - 支持 wget 下载，自动安装 wget
   - 双模式交互界面（优先 whiptail，回退到文本模式）
   - 自动按发行版分类存储
+- **`pm make`** - 构建 rootfs 镜像
+  - 使用 debootstrap 构建 Debian/Ubuntu 等发行版
+  - 使用 pacstrap 构建 Arch Linux（仅限 Arch 系统）
+  - 支持三种构建类型：minimal（精简版）、standard（标准版）、full（完整版）
+  - 自动检测和安装所需工具（debootstrap/pacstrap）
 
 #### 📦 支持的镜像下载列表
 
-| 发行版     | 架构/版本 | libc 选项 |
-| ------- | ----- | ------- |
-| Void Linux | x86_64 | musl, glibc |
-| Void Linux | arm64 | musl, glibc |
-| Void Linux | arm32 | musl, glibc |
-| Ubuntu | 2404 | amd64, arm64 |
-| Ubuntu | 2604 | amd64, arm64 |
-| Alpine | amd64 | - |
-| Alpine | amd32 | - |
-| Alpine | arm64 | - |
-| Alpine | arm32 | - |
+| 发行版        | 架构/版本   | libc 选项      |
+| ---------- | ------- | ------------ |
+| Void Linux | x86\_64 | musl, glibc  |
+| Void Linux | arm64   | musl, glibc  |
+| Void Linux | arm32   | musl, glibc  |
+| Ubuntu     | 2404    | amd64, arm64 |
+| Ubuntu     | 2604    | amd64, arm64 |
+| Alpine     | amd64   | -            |
+| Alpine     | amd32   | -            |
+| Alpine     | arm64   | -            |
+| Alpine     | arm32   | -            |
+| Kali Linux | 多版本     | -            |
 
 ### 🔐 多模式支持
 
@@ -127,6 +133,27 @@ pm 子命令目前支持：
 - Void Linux (多种架构和 libc)
 - Ubuntu (多个版本和架构)
 - Alpine (多种架构)
+- Kali Linux (跳转到官网下载)
+
+#### 使用 pm make 构建镜像（推荐！）
+
+```bash
+# 交互式构建镜像（推荐）
+sudo ./groot pm make
+
+# 命令行模式构建
+sudo ./groot pm make --distro debian --version 12 --type standard
+sudo ./groot pm make --distro ubuntu --version 24.04 --type minimal
+
+# 自定义构建目录
+sudo ./groot pm make --distro arch --dest ~/my-rootfs
+```
+
+pm make 支持的发行版：
+
+- **Debian**：10, 11, 12, testing, unstable
+- **Ubuntu**：20.04, 22.04, 24.04
+- **Arch Linux**：仅限在 Arch 系统上构建
 
 #### 专属 proot 兼容模式
 
@@ -214,12 +241,29 @@ groot/
   - `whiptail` - 提供交互式菜单界面
   - `wget` - 提供更好的下载体验（自动安装）
 
+### void Linux的musl版本无法运行groot？
+
+- 安装官方的兼容版本glibc即可
+  ```
+  xbps-install -S void-repo-nonfree
+  xbps-install -S glibc-locales glibc
+  ```
+
 ## 💡 开发说明
 
 本项目完全完美实现！
 
 ## 📖 版本历史
 
+- 2026-5.4->V0.2-pm make 功能增强
+  - 新增 pm make 子命令，支持从源码构建 rootfs 镜像
+  - 支持 Debian/Ubuntu 使用 debootstrap 构建
+  - 支持 Arch Linux 使用 pacstrap 构建（仅限 Arch 系统）
+  - 新增三种构建类型：minimal（精简版）、standard（标准版）、full（完整版）
+  - 自动检测并安装所需构建工具
+  - 完善的交互式界面（whiptail + 文本回退）
+  - 更新 pm download 支持 Kali Linux（跳转到官网下载）
+  - 修复和优化多个功能
 - 2026-5.3->V0.1-groot的第一个版本
 
 ## 📄 许可证

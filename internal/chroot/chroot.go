@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"groot/internal/env"
@@ -50,6 +51,12 @@ func Run(rootfsPath string, customShell string) error {
 
 	// 准备用户主目录
 	mount.PrepareUserHome(absRootfsPath, userInfo, false)
+
+	// 检测并应用 Arch Linux 特定配置
+	if IsArchLinux(absRootfsPath) {
+		SetupArchSpecific(absRootfsPath)
+		FixArchPacmanIssues(absRootfsPath)
+	}
 
 	// 使用可执行文件路径
 	exePath := permission.GetExecutablePath()
@@ -245,15 +252,139 @@ func ChildMain(rootfsPath string, customShell string, customUser string) error {
 exit 0`
 	os.WriteFile("/usr/bin/systemd-run", []byte(fakeSystemd), 0755)
 
+	// 检查是否是 Arch Linux 并修复 pacman 问题
+	if _, err := os.Stat("/etc/arch-release"); err == nil {
+		logger.Debug("Arch Linux: 设置 pacman 运行环境...")
+
+		// 1. 尝试卸载 /etc/mtab 的 bind mount（兼容旧版本）
+		_ = syscall.Unmount("/etc/mtab", syscall.MNT_DETACH)
+
+		// 2. 创建静态 /etc/mtab，pacman 依赖它来确定根挂载点
+		mtabContent := `rootfs / rootfs rw 0 0
+/dev/root / ext4 rw,relatime 0 0
+proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+sys /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0
+dev /dev devtmpfs rw,nosuid,relatime 0 0
+devpts /dev/pts devpts rw,nosuid,noexec,relatime 0 0
+shm /dev/shm tmpfs rw,nosuid,nodev,noexec 0 0
+tmpfs /tmp tmpfs rw,nosuid,nodev 0 0
+tmpfs /run tmpfs rw,nosuid,nodev,noexec,mode=755 0 0
+`
+		_ = os.WriteFile("/etc/mtab", []byte(mtabContent), 0644)
+
+		// 3. 确保必要目录存在且权限正确
+		os.MkdirAll("/var/cache/pacman/pkg", 0755)
+		os.MkdirAll("/var/lib/pacman/sync", 0755)
+		os.MkdirAll("/var/lib/pacman/local", 0755)
+		os.MkdirAll("/tmp", 01777)
+		_ = os.Chmod("/tmp", 01777)
+
+		// 4. 环境变量
+		_ = os.Setenv("TMPDIR", "/tmp")
+		_ = os.Setenv("PACMAN_CACHE", "/var/cache/pacman/pkg")
+
+		// 5. 创建 pacman 包装器（如果已经备份过原始 pacman）
+		if _, err := os.Stat("/usr/bin/pacman.original"); err == nil {
+			wrapperScript := `#!/bin/bash
+export TMPDIR=/tmp
+export PACMAN_CACHE=/var/cache/pacman/pkg
+export LC_ALL=C
+
+mkdir -p /var/cache/pacman/pkg /var/lib/pacman/sync /var/lib/pacman/local /tmp
+chmod 1777 /tmp 2>/dev/null
+
+if [ -w /etc/mtab ]; then
+cat > /etc/mtab <<'MTAB'
+rootfs / rootfs rw 0 0
+/dev/root / ext4 rw,relatime 0 0
+proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+sys /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0
+dev /dev devtmpfs rw,nosuid,relatime 0 0
+devpts /dev/pts devpts rw,nosuid,noexec,relatime 0 0
+shm /dev/shm tmpfs rw,nosuid,nodev,noexec 0 0
+tmpfs /tmp tmpfs rw,nosuid,nodev 0 0
+tmpfs /run tmpfs rw,nosuid,nodev,noexec,mode=755 0 0
+MTAB
+fi
+
+exec /usr/bin/pacman.original "$@"
+`
+			_ = os.WriteFile("/usr/bin/pacman", []byte(wrapperScript), 0755)
+		}
+	}
+
 	// 直接执行 shell，先 source 环境！
 	logger.Info("启动 shell: %s", shell)
+
+	// 为 Arch Linux 创建 pacman wrapper，解决挂载点检测问题
+	pacmanWrapper := ""
+	if _, err := os.Stat("/etc/arch-release"); err == nil {
+		wrapperScript := `#!/bin/bash
+# Groot pacman wrapper: 解决 chroot 环境中的挂载点检测问题
+
+# 强制设置 PATH，确保优先使用 /dev/shm
+export PATH="/dev/shm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+echo "DEBUG: Groot pacman wrapper called" >&2
+
+# 确保 /dev/shm 挂载
+if ! mountpoint -q /dev/shm 2>/dev/null; then
+    mount -t tmpfs tmpfs /dev/shm 2>/dev/null || true
+fi
+
+mkdir -p /dev/shm
+
+# 创建自绑定让 / 看起来像挂载点
+mount --bind / / 2>/dev/null || true
+
+# 同时让 /var/cache 也成为挂载点
+mount --bind /var/cache /var/cache 2>/dev/null || true
+
+export TMPDIR=/tmp
+export PACMAN_CACHE=/var/cache/pacman/pkg
+
+mkdir -p /tmp 2>/dev/null
+chmod 1777 /tmp 2>/dev/null
+mkdir -p /var/cache/pacman/pkg 2>/dev/null
+chmod 755 /var/cache/pacman/pkg 2>/dev/null
+
+if [ ! -e /etc/mtab ]; then
+    ln -s /proc/mounts /etc/mtab 2>/dev/null
+fi
+
+if [ ! -d /proc/self ]; then
+    mount -t proc proc /proc 2>/dev/null
+fi
+
+echo "DEBUG: About to call real pacman" >&2
+
+# 执行原始 pacman
+exec /usr/bin/pacman "$@"
+`
+		wrapperPath := "/dev/shm/pacman"
+	_ = os.WriteFile(wrapperPath, []byte(wrapperScript), 0755)
+	logger.Info("Created pacman wrapper at %s", wrapperPath)
+	pacmanWrapper = "; export PATH=/dev/shm:/sbin:/usr/sbin:/bin:/usr/bin; echo 'Wrapper PATH: $PATH'"
+	}
+
 	fixScript := "if [ -f /var/lib/dpkg/info/libc6:amd64.postinst ]; then " +
 		"grep -q 'Groot: skip' /var/lib/dpkg/info/libc6:amd64.postinst 2>/dev/null || " +
 		"(cp /var/lib/dpkg/info/libc6:amd64.postinst /var/lib/dpkg/info/libc6:amd64.postinst.bak 2>/dev/null; " +
 		"echo '#!/bin/bash'; echo 'exit 0' > /var/lib/dpkg/info/libc6:amd64.postinst; " +
 		"chmod +x /var/lib/dpkg/info/libc6:amd64.postinst); fi"
 	var cmd *exec.Cmd
-	cmd = exec.Command("/bin/sh", "-c", fixScript+"; export PATH=/sbin:/usr/sbin:/bin:/usr/bin; SHELL="+shell+" exec "+shell)
+
+	// 为 Arch Linux 添加 /dev/shm 到 PATH
+	if pacmanWrapper != "" {
+		for i, e := range newEnv {
+			if strings.HasPrefix(e, "PATH=") {
+				newEnv[i] = e + ":/dev/shm"
+				break
+			}
+		}
+	}
+
+	cmd = exec.Command("/bin/sh", "-c", fixScript+pacmanWrapper+"; export PATH=/dev/shm:/sbin:/usr/sbin:/bin:/usr/bin; SHELL="+shell+" exec "+shell)
 	cmd.Env = newEnv
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

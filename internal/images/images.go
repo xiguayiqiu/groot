@@ -19,6 +19,7 @@ type ImagesConfig struct {
 	Void   DistroConfig `json:"void"`
 	Ubuntu DistroConfig `json:"ubuntu"`
 	Alpine DistroConfig `json:"alpine"`
+	Kali   DistroConfig `json:"kali"`
 }
 
 type DistroConfig struct {
@@ -132,6 +133,11 @@ func ListAvailableImages(cfg *ImagesConfig) error {
 	for arch := range alpineBase {
 		fmt.Printf("  架构: %s\n", arch)
 	}
+	fmt.Println()
+
+	fmt.Println("Kali Linux:")
+	fmt.Println("  访问 https://old.kali.org/nethunter-images/ 下载")
+	fmt.Println()
 
 	return nil
 }
@@ -156,6 +162,8 @@ func ensureWgetInstalled() error {
 		installCmd = exec.Command("pacman", "-S", "--noconfirm", "wget")
 	} else if _, err := exec.LookPath("apk"); err == nil {
 		installCmd = exec.Command("apk", "add", "--no-cache", "wget")
+	} else if _, err := exec.LookPath("xbps-install"); err == nil {
+		installCmd = exec.Command("xbps-install", "-y", "wget")
 	} else {
 		return fmt.Errorf("无法检测到系统包管理器，请手动安装wget")
 	}
@@ -313,16 +321,109 @@ func runWhiptailMenu(title, prompt string, items ...string) (string, error) {
 }
 
 func InteractiveDownload(cfg *ImagesConfig, destDir string) error {
-	_, err := exec.LookPath("whiptail")
-	if err != nil {
-		return InteractiveDownloadSimple(cfg, destDir)
+	if _, err := exec.LookPath("whiptail"); err == nil {
+		return interactiveDownloadWhiptail(cfg, destDir)
 	}
+	// 如果 whiptail 没有找到，先尝试安装
+	fmt.Println("提示: whiptail 没有找到，尝试安装它以获得更好的交互体验...")
+	distro := detectDistroDownload()
+	fmt.Printf("检测到当前系统是: %s\n", distro)
+	switch distro {
+	case "alpine":
+		if _, err := exec.LookPath("apk"); err == nil {
+			cmd := exec.Command("apk", "add", "--no-cache", "newt")
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err == nil {
+				if _, err := exec.LookPath("whiptail"); err == nil {
+					return interactiveDownloadWhiptail(cfg, destDir)
+				}
+			}
+		}
+	case "void":
+		if _, err := exec.LookPath("xbps-install"); err == nil {
+			fmt.Println("找到 xbps-install，正在安装 newt 包...")
+			cmd := exec.Command("xbps-install", "-Sy", "newt")
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			cmd.Stdin = os.Stdin
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("安装 newt 失败: %v\n", err)
+			} else {
+				fmt.Println("安装 newt 成功，检查 whiptail 是否存在...")
+				if _, err := exec.LookPath("whiptail"); err == nil {
+					fmt.Println("找到 whiptail，启动交互式菜单...")
+					return interactiveDownloadWhiptail(cfg, destDir)
+				} else {
+					fmt.Printf("whiptail 仍然未找到: %v\n", err)
+				}
+			}
+		} else {
+			fmt.Printf("未找到 xbps-install: %v\n", err)
+		}
+	}
+	// 如果安装失败或者其他发行版，回退到文本模式
+	fmt.Println("将使用文本交互模式")
+	return InteractiveDownloadSimple(cfg, destDir)
+}
+
+func detectDistroDownload() string {
+	fileExists := func(path string) bool {
+		_, err := os.Stat(path)
+		return err == nil
+	}
+
+	if fileExists("/etc/void-release") {
+		return "void"
+	}
+	if fileExists("/etc/alpine-release") {
+		return "alpine"
+	}
+	if fileExists("/etc/arch-release") {
+		return "arch"
+	}
+	if fileExists("/etc/debian_version") {
+		return "debian"
+	}
+	if fileExists("/etc/os-release") {
+		data, err := os.ReadFile("/etc/os-release")
+		if err == nil {
+			strData := string(data)
+			if strings.Contains(strData, "ID=void") ||
+				strings.Contains(strData, "ID=\"void\"") ||
+				strings.Contains(strData, "Void Linux") {
+				return "void"
+			}
+			if strings.Contains(strData, "ID=alpine") ||
+				strings.Contains(strData, "ID=\"alpine\"") {
+				return "alpine"
+			}
+			if strings.Contains(strData, "ID=arch") ||
+				strings.Contains(strData, "ID=\"arch\"") {
+				return "arch"
+			}
+			if strings.Contains(strData, "ID=debian") ||
+				strings.Contains(strData, "ID=\"debian\"") ||
+				strings.Contains(strData, "ID=ubuntu") ||
+				strings.Contains(strData, "ID=\"ubuntu\"") {
+				return "debian"
+			}
+		}
+	}
+	if fileExists("/usr/bin/xbps-install") {
+		return "void"
+	}
+	return "unknown"
+}
+
+func interactiveDownloadWhiptail(cfg *ImagesConfig, destDir string) error {
 
 	for {
 		distro, err := runWhiptailMenu("发行版", "请选择:",
 			"void", "",
 			"ubuntu", "",
 			"alpine", "",
+			"kali", "",
 			"all", "",
 		)
 		if err != nil || distro == "" {
@@ -416,6 +517,44 @@ func InteractiveDownload(cfg *ImagesConfig, destDir string) error {
 					return DownloadImage(url, filepath.Join(destDir, "alpine"))
 				}
 			}
+
+		case "kali":
+			// 确认是否跳转Kali官网
+			whiptailPath, _ := exec.LookPath("whiptail")
+			confirmMsg := "Kali Linux 的 rootfs 镜像需要从官网下载\n\nhttps://old.kali.org/nethunter-images/\n\n是否打开浏览器访问该页面？"
+			cmd := exec.Command(whiptailPath, "--title", "Kali Linux 下载", "--yesno", confirmMsg, "15", "60")
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+
+			if err := cmd.Run(); err == nil {
+				// 用户确认，尝试打开浏览器
+				kaliUrl := "https://old.kali.org/nethunter-images/"
+				fmt.Printf("正在打开 %s\n", kaliUrl)
+
+				// 尝试使用不同的浏览器打开命令
+				var openCmd *exec.Cmd
+				if _, err := exec.LookPath("xdg-open"); err == nil {
+					openCmd = exec.Command("xdg-open", kaliUrl)
+				} else if _, err := exec.LookPath("open"); err == nil {
+					openCmd = exec.Command("open", kaliUrl)
+				} else if _, err := exec.LookPath("cmd.exe"); err == nil {
+					openCmd = exec.Command("cmd.exe", "/c", "start", kaliUrl)
+				}
+
+				if openCmd != nil {
+					openCmd.Stdout = os.Stdout
+					openCmd.Stderr = os.Stderr
+					if err := openCmd.Start(); err != nil {
+						fmt.Printf("无法自动打开浏览器，请手动访问: %s\n", kaliUrl)
+					} else {
+						fmt.Printf("已为您打开浏览器，请访问: %s\n", kaliUrl)
+					}
+				} else {
+					fmt.Printf("请手动访问: %s\n", kaliUrl)
+				}
+				return nil
+			}
 		}
 	}
 }
@@ -426,7 +565,8 @@ func InteractiveDownloadSimple(cfg *ImagesConfig, destDir string) error {
 	fmt.Println("1. Void Linux")
 	fmt.Println("2. Ubuntu")
 	fmt.Println("3. Alpine")
-	fmt.Println("4. 下载所有镜像")
+	fmt.Println("4. Kali Linux")
+	fmt.Println("5. 下载所有镜像")
 	fmt.Println("0. 退出")
 
 	var choice string
@@ -558,6 +698,44 @@ func InteractiveDownloadSimple(cfg *ImagesConfig, destDir string) error {
 		}
 
 	case "4":
+		// Kali Linux
+		fmt.Println("\n--- Kali Linux ---")
+		fmt.Println("Kali Linux 的 rootfs 镜像需要从官网下载")
+		fmt.Println("链接: https://old.kali.org/nethunter-images/")
+		fmt.Print("\n是否打开浏览器访问该页面？(y/n): ")
+
+		var confirm string
+		fmt.Scanln(&confirm)
+
+		if confirm == "y" || confirm == "Y" {
+			kaliUrl := "https://old.kali.org/nethunter-images/"
+			fmt.Printf("\n正在打开 %s\n", kaliUrl)
+
+			// 尝试使用不同的浏览器打开命令
+			var openCmd *exec.Cmd
+			if _, err := exec.LookPath("xdg-open"); err == nil {
+				openCmd = exec.Command("xdg-open", kaliUrl)
+			} else if _, err := exec.LookPath("open"); err == nil {
+				openCmd = exec.Command("open", kaliUrl)
+			} else if _, err := exec.LookPath("cmd.exe"); err == nil {
+				openCmd = exec.Command("cmd.exe", "/c", "start", kaliUrl)
+			}
+
+			if openCmd != nil {
+				openCmd.Stdout = os.Stdout
+				openCmd.Stderr = os.Stderr
+				if err := openCmd.Start(); err != nil {
+					fmt.Printf("无法自动打开浏览器，请手动访问: %s\n", kaliUrl)
+				} else {
+					fmt.Printf("已为您打开浏览器，请访问: %s\n", kaliUrl)
+				}
+			} else {
+				fmt.Printf("请手动访问: %s\n", kaliUrl)
+			}
+		}
+		return nil
+
+	case "5":
 		// 下载所有镜像
 		return DownloadAllImages(cfg, destDir)
 
