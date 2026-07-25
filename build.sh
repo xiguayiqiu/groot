@@ -209,6 +209,9 @@ package_zip() {
     esac
 
     out_name="${PROJECT_NAME}-${VERSION}-${zip_arch}.zip"
+    if [ "$IS_TERMUX" -eq 1 ]; then
+        out_name="${PROJECT_NAME}-${VERSION}-termux_${zip_arch}.zip"
+    fi
 
     local pkg_dir="${OUTPUT_DIR}/zip/${out_name%.zip}"
     mkdir -p "${pkg_dir}"
@@ -280,7 +283,23 @@ build_and_package() {
     echo ""
 
     # 打包为 zip
+    local zip_ok=0
     if package_zip "$arch" "$binary_name"; then
+        zip_ok=1
+
+        # armv7/armv8 额外生成 Termux 专用 zip
+        if [ "$arch" = "armv7" ] || [ "$arch" = "armv8" ]; then
+            local saved_is_termux=$IS_TERMUX
+            IS_TERMUX=1
+            set +e
+            package_zip "$arch" "$binary_name" && zip_ok=1
+            set -e
+            IS_TERMUX=$saved_is_termux
+        fi
+    fi
+
+    # 有 zip 包后删除二进制
+    if [ "$zip_ok" -eq 1 ]; then
         rm -f "${OUTPUT_DIR}/${binary_name}"
     else
         echo "  ℹ 保留二进制文件: ${binary_name}"
@@ -356,6 +375,16 @@ package_existing() {
     fi
 
     package_zip "$arch" "$binary_name"
+
+    # armv7/armv8 额外生成 Termux 专用 zip
+    if [ "$arch" = "armv7" ] || [ "$arch" = "armv8" ]; then
+        local saved_is_termux=$IS_TERMUX
+        IS_TERMUX=1
+        set +e
+        package_zip "$arch" "$binary_name"
+        set -e
+        IS_TERMUX=$saved_is_termux
+    fi
 }
 
 # 列出输出文件
@@ -416,6 +445,7 @@ Termux 支持:
   .zip 文件包含:
     groot             二进制文件
     install.sh        安装脚本 (安装到 /usr/local/bin/ 或 Termux 的 \$PREFIX/bin/，自动生成卸载命令)
+    armv7/armv8 额外生成 termux_ 前缀的 Termux 专用 zip
 
 EOF
 }
