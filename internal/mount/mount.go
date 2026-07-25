@@ -59,10 +59,10 @@ var mountPoints = []struct {
 	{"/var/tmp", "var/tmp", "", syscall.MS_BIND, "", false},
 	{"/var/log", "var/log", "", syscall.MS_BIND, "", false},
 
-	// 网络解析 - 可选
-	{"/etc/hosts", "etc/hosts", "", syscall.MS_BIND, "", false},
-	{"/etc/resolv.conf", "etc/resolv.conf", "", syscall.MS_BIND, "", false},
-	{"/etc/nsswitch.conf", "etc/nsswitch.conf", "", syscall.MS_BIND, "", false},
+	// 网络解析 - 改为由 cleanup 模块在主机端生成，避免泄漏宿主机条目
+	// {"/etc/hosts", "etc/hosts", "", syscall.MS_BIND, "", false},
+	// {"/etc/resolv.conf", "etc/resolv.conf", "", syscall.MS_BIND, "", false},
+	// {"/etc/nsswitch.conf", "etc/nsswitch.conf", "", syscall.MS_BIND, "", false},
 
 	// 系统配置 - 可选
 	{"/etc/mtab", "etc/mtab", "", syscall.MS_BIND, "", false},

@@ -9,7 +9,10 @@ import (
 	"strings"
 	"syscall"
 
+	"groot/internal/cleanup"
+	"groot/internal/env"
 	"groot/internal/logger"
+	"groot/internal/termux"
 	"groot/internal/usercheck"
 )
 
@@ -17,8 +20,8 @@ import (
 func RunAlpineProot(rootfsPath string, customShell string) error {
 	logger.Info("Alpine 专属模式启动！rootfs: %s", rootfsPath)
 
-	// 查找系统 proot
-	prootPath, err := exec.LookPath("proot")
+	// 查找系统 proot（使用安全的 LookPath，避免 Termux 中 SIGSYS 崩溃）
+	prootPath, err := termux.SafeLookPath("proot")
 	if err != nil {
 		return fmt.Errorf("没找到 proot：sudo apt install proot")
 	}
@@ -57,6 +60,12 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 	logger.Info("终极修复 rootfs 权限为当前用户")
 	fixAlpineRootfs(absRootfsPath, currentUid, currentGid)
 
+	// 在主机端清理 rootfs 中的宿主机环境痕迹
+	preHostname := env.GetHostname(absRootfsPath, cleanup.DefaultHostname)
+	if err := cleanup.CleanupRootfs(absRootfsPath, preHostname); err != nil {
+		logger.Warn("清理 rootfs 环境失败: %v", err)
+	}
+
 	// 确定 shell - 与 chroot 模式相同的逻辑
 	shell := "/bin/sh"
 	if customShell != "" {
@@ -77,36 +86,21 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 		}
 	}
 
-	// 终极挂载参数！！！
+	// 终极挂载参数 - 以 login shell 方式启动，自动 source /etc/profile
+	// 启动前打印彩色广告横幅
+	execCmd := "export PATH=/sbin:/usr/sbin:/bin:/usr/bin; export ENV=/etc/profile; printf '\\033[36m[Groot]\\033[0m \\033[32m如果你喜欢groot的话，请前往 https://gyscan.space 下载gyscan吧 [qwq]\\033[0m\\n'; exec " + shell + " -l"
 	var args []string
-	if customShell != "" {
-		// 自定义 shell，先 source 环境
-		args = []string{
-			"--kill-on-exit",
-			"-0",
-			"-r", absRootfsPath,
-			"-w", "/",
-			"-b", "/dev",
-			"-b", "/proc",
-			"-b", "/sys",
-			"-b", "/tmp",
-			shell,
-			"-c", "export PATH=/sbin:/usr/sbin:/bin:/usr/bin; [ -f /etc/profile ] && . /etc/profile; exec " + shell,
-		}
-	} else {
-		// 默认 shell，先 source 环境
-		args = []string{
-			"--kill-on-exit",
-			"-0",
-			"-r", absRootfsPath,
-			"-w", "/",
-			"-b", "/dev",
-			"-b", "/proc",
-			"-b", "/sys",
-			"-b", "/tmp",
-			shell,
-			"-c", "export PATH=/sbin:/usr/sbin:/bin:/usr/bin; [ -f /etc/profile ] && . /etc/profile; exec " + shell,
-		}
+	args = []string{
+		"--kill-on-exit",
+		"-0",
+		"-r", absRootfsPath,
+		"-w", "/",
+		"-b", "/dev",
+		"-b", "/proc",
+		"-b", "/sys",
+		"-b", "/tmp",
+		"/bin/sh",
+		"-c", execCmd,
 	}
 
 	logger.Info("执行完美 proot 命令：%s %v", prootPath, args)

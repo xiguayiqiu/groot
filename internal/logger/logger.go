@@ -13,6 +13,17 @@ const (
 	LevelInfo
 	LevelWarn
 	LevelError
+	LevelSilent
+)
+
+// ANSI 颜色码
+const (
+	colorReset  = "\033[0m"
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorBlue   = "\033[34m"
+	colorCyan   = "\033[36m"
 )
 
 var (
@@ -20,10 +31,17 @@ var (
 	logLevel   = LevelInfo
 	logOutput  io.Writer = os.Stderr
 	timeFormat = "2006-01-02 15:04:05"
+	colorize   = true // 默认启用颜色
 )
 
 func init() {
 	logger = log.New(logOutput, "", log.LstdFlags)
+	// 检测是否支持颜色（非 Windows 且输出为终端）
+	if fi, err := os.Stderr.Stat(); err == nil {
+		if fi.Mode()&os.ModeCharDevice == 0 {
+			colorize = false
+		}
+	}
 }
 
 // SetLevel 设置日志级别
@@ -37,37 +55,45 @@ func SetOutput(w io.Writer) {
 	logger = log.New(logOutput, "", log.LstdFlags)
 }
 
+// col 返回带颜色的标签，colorize=false 时返回纯文本
+func col(color, label string) string {
+	if colorize {
+		return color + label + colorReset
+	}
+	return label
+}
+
 // Debug 输出调试日志
 func Debug(format string, v ...interface{}) {
 	if logLevel <= LevelDebug {
-		logger.Printf("[DEBUG] "+format, v...)
+		logger.Printf(col(colorBlue, "[DEBUG] ")+format, v...)
 	}
 }
 
 // Info 输出信息日志
 func Info(format string, v ...interface{}) {
 	if logLevel <= LevelInfo {
-		logger.Printf("[INFO] "+format, v...)
+		logger.Printf(col(colorGreen, "[INFO] ")+format, v...)
 	}
 }
 
 // Warn 输出警告日志
 func Warn(format string, v ...interface{}) {
 	if logLevel <= LevelWarn {
-		logger.Printf("[WARN] "+format, v...)
+		logger.Printf(col(colorYellow, "[WARN] ")+format, v...)
 	}
 }
 
 // Error 输出错误日志
 func Error(format string, v ...interface{}) {
 	if logLevel <= LevelError {
-		logger.Printf("[ERROR] "+format, v...)
+		logger.Printf(col(colorRed, "[ERROR] ")+format, v...)
 	}
 }
 
 // Fatal 输出致命错误日志并退出
 func Fatal(format string, v ...interface{}) {
-	logger.Printf("[FATAL] "+format, v...)
+	logger.Printf(col(colorRed, "[FATAL] ")+format, v...)
 	os.Exit(1)
 }
 
@@ -77,4 +103,17 @@ func FatalIfError(err error, format string, v ...interface{}) {
 		msg := fmt.Sprintf(format, v...)
 		Fatal("%s: %v", msg, err)
 	}
+}
+
+// ColoredBanner 返回彩色横幅字符串（不带换行）
+func ColoredBanner() string {
+	line := fmt.Sprintf(
+		"%s[%s]%s %s如果你喜欢请前往 %sgyscan.space%s 下载 gyscan 吧～%s",
+		colorCyan, "Groot", colorReset,
+		colorGreen, colorCyan, colorGreen, colorReset,
+	)
+	if !colorize {
+		line = "[Groot] 如果你喜欢请前往 gyscan.space 下载 gyscan 吧～"
+	}
+	return line
 }

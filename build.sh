@@ -2,10 +2,18 @@
 
 set -e
 
-# 项目配置
+# ============================================
+#  Groot 编译与打包脚本
+#  支持生成 deb/rpm/pacman/apk 安装包
+# ============================================
+
 PROJECT_NAME="groot"
 OUTPUT_DIR="build"
-PARALLEL=0  # 是否并行编译，0=否，1=是
+VERSION="0.3"
+PACKAGE_LICENSE="MIT"
+PACKAGE_URL="https://gyscan.space"
+PACKAGE_DESCRIPTION="Go 版双模式隔离工具（chroot/proot）- 轻量级 Linux 容器环境"
+PACKAGE_MAINTAINER="弈秋忘忧白帽 <https://gyscan.space>"
 
 # 定义目标架构
 declare -A TARGETS
@@ -16,19 +24,29 @@ TARGETS=(
     ["armv8"]="linux/arm64"
 )
 
+# Termux 检测
+IS_TERMUX=0
+if [ -n "$TERMUX_VERSION" ] || [ -n "$PREFIX" ]; then
+    IS_TERMUX=1
+fi
+
 # 打印标题
 print_header() {
     local os_name=$(uname -s)
     local arch_name=$(uname -m)
     local go_version=$(go version 2>/dev/null | awk '{print $3}' || echo "unknown")
-    
+
     echo "========================================"
-    echo "  $PROJECT_NAME 编译脚本"
+    echo "  $PROJECT_NAME 编译与打包脚本"
     echo "========================================"
     echo "  项目:        $PROJECT_NAME"
+    echo "  版本:        $VERSION"
     echo "  Go 版本:     $go_version"
     echo "  构建环境:    $os_name/$arch_name"
     echo "  输出目录:    $OUTPUT_DIR"
+    if [ "$IS_TERMUX" -eq 1 ]; then
+        echo "  模式:        Termux 兼容模式"
+    fi
     echo "========================================"
     echo ""
 }
@@ -36,9 +54,7 @@ print_header() {
 # 创建输出目录
 create_output_dir() {
     mkdir -p "$OUTPUT_DIR"
-    if [ $? -eq 0 ]; then
-        echo "✓ 输出目录准备完毕"
-    fi
+    echo "✓ 输出目录准备完毕"
 }
 
 # 检查 Go 环境
@@ -50,211 +66,375 @@ check_go_env() {
     echo "✓ Go 环境检查通过"
 }
 
-# 编译单个架构
-build_single() {
+# ============================
+#  二进制编译
+# ============================
+
+build_binary() {
     local arch=$1
     local target=$2
-    local GOOS GOARCH ARCHIVE_NAME
-    
+    local GOOS GOARCH BINARY_NAME
+
     IFS="/" read -r GOOS GOARCH <<< "$target"
-    
+
+    BINARY_NAME="${PROJECT_NAME}_${GOOS}_${GOARCH}"
     case "$GOARCH" in
-        "amd64")
-            ARCHIVE_NAME="${PROJECT_NAME}_linux_amd64"
-            ;;
-        "386")
-            ARCHIVE_NAME="${PROJECT_NAME}_linux_i386"
-            ;;
-        "arm")
-            ARCHIVE_NAME="${PROJECT_NAME}_linux_armv7"
-            export GOARM=7
-            ;;
-        "arm64")
-            ARCHIVE_NAME="${PROJECT_NAME}_linux_armv8"
-            ;;
-        *)
-            echo "✗ 未知架构: $GOARCH"
-            return 1
-            ;;
+        "arm") BINARY_NAME="${PROJECT_NAME}_${GOOS}_armv7"; export GOARM=7 ;;
+        "arm64") BINARY_NAME="${PROJECT_NAME}_${GOOS}_armv8" ;;
     esac
-    
+
     echo "→ 编译: $arch ($GOOS/$GOARCH)"
-    
-    # 设置环境变量
-    export GOOS
-    export GOARCH
-    
-    # 编译
+
     local start_time=$(date +%s)
-    
-    if go build -ldflags "-s -w" -o "${OUTPUT_DIR}/${ARCHIVE_NAME}" ./cmd/groot 2>&1; then
+    export GOOS GOARCH
+
+    if go build -ldflags "-s -w" -o "${OUTPUT_DIR}/${BINARY_NAME}" ./cmd/groot 2>&1; then
         local end_time=$(date +%s)
-        local duration=$((end_time - start_time))
-        local file_size=$(du -h "${OUTPUT_DIR}/${ARCHIVE_NAME}" | cut -f1)
-        
-        echo "  ✓ 编译成功 (${duration}s, ${file_size})"
-        
+        local file_size=$(du -h "${OUTPUT_DIR}/${BINARY_NAME}" | cut -f1)
+        echo "  ✓ 编译成功 ($((end_time - start_time))s, ${file_size})"
         return 0
     else
-        echo "✗ 编译失败: $GOOS/$GOARCH"
+        echo "  ✗ 编译失败: $arch"
         return 1
     fi
 }
 
-# 编译所有架构
-build_all() {
-    echo "开始编译所有架构..."
+build_all_binaries() {
+    local success=0 fail=0 current=0 total=${#TARGETS[@]}
     echo ""
-    
-    local success_count=0
-    local fail_count=0
-    local total=${#TARGETS[@]}
-    local current=0
-    
+    echo "--- 编译所有架构 ---"
     for arch in "${!TARGETS[@]}"; do
         current=$((current + 1))
-        echo "[${current}/${total}] 处理 $arch"
-        
-        if build_single "$arch" "${TARGETS[$arch]}"; then
-            success_count=$((success_count + 1))
+        echo "[${current}/${total}]"
+        if build_binary "$arch" "${TARGETS[$arch]}"; then
+            success=$((success + 1))
         else
-            fail_count=$((fail_count + 1))
+            fail=$((fail + 1))
         fi
-        echo ""
     done
-    
-    # 显示统计
-    echo "========================================"
-    echo "构建统计:"
-    echo "  成功: $success_count"
-    echo "  失败: $fail_count"
-    echo "  总计: $total"
-    echo "========================================"
-    
-    if [ $fail_count -eq 0 ]; then
-        echo ""
-        echo "✓ 所有架构编译完成！"
-        list_output
+    echo ""
+    echo "结果: 成功 $success / 失败 $fail / 总计 $total"
+    [ $fail -eq 0 ] || return 1
+    return 0
+}
+
+# ============================
+#  打包函数
+# ============================
+
+# 生成 install 脚本
+generate_install_script() {
+    local arch=$1
+
+    if [ "$IS_TERMUX" -eq 1 ]; then
+        local install_path="/data/data/com.termux/files/usr/bin"
     else
-        echo ""
-        echo "✗ 部分构建失败，请检查错误"
+        local install_path="/usr/local/bin"
+    fi
+
+    cat <<INSTALL
+#!/bin/sh
+# groot ${VERSION} 安装脚本
+# 需要 root/sudo 权限安装到系统目录
+
+if [ "\$(id -u)" -ne 0 ] && [ -z "\$TERMUX_VERSION" ]; then
+    echo "请使用 sudo 运行此安装脚本:"
+    echo "  sudo sh install.sh"
+    exit 1
+fi
+
+install_path="${install_path}"
+
+echo "正在安装 groot ${VERSION} 到 \${install_path}/ ..."
+cp groot "\${install_path}/groot"
+chmod 755 "\${install_path}/groot"
+
+# 创建卸载脚本
+cat > "\${install_path}/groot-uninstall" << 'UNINSTALL'
+#!/bin/sh
+if [ "\$(id -u)" -ne 0 ] && [ -z "\$TERMUX_VERSION" ]; then
+    echo "请使用 sudo 运行卸载:"
+    echo "  sudo groot-uninstall"
+    exit 1
+fi
+echo "正在卸载 groot..."
+rm -f /usr/local/bin/groot
+rm -f /data/data/com.termux/files/usr/bin/groot
+rm -f /usr/local/bin/groot-uninstall
+rm -f /data/data/com.termux/files/usr/bin/groot-uninstall
+echo "groot 已卸载"
+UNINSTALL
+chmod 755 "\${install_path}/groot-uninstall"
+
+echo "安装完成！"
+echo "  运行: groot -h"
+echo "  卸载: sudo groot-uninstall"
+INSTALL
+}
+
+# 生成 uninstall 脚本
+generate_uninstall_script() {
+    cat <<'UNINSTALL'
+#!/bin/sh
+# groot 卸载脚本
+# 需要 root/sudo 权限
+
+if [ "$(id -u)" -ne 0 ] && [ -z "$TERMUX_VERSION" ]; then
+    echo "请使用 sudo 运行卸载:"
+    echo "  sudo sh groot-uninstall"
+    exit 1
+fi
+echo "正在卸载 groot..."
+rm -f /usr/local/bin/groot
+rm -f /data/data/com.termux/files/usr/bin/groot
+rm -f /usr/local/bin/groot-uninstall
+rm -f /data/data/com.termux/files/usr/bin/groot-uninstall
+echo "groot 已卸载"
+UNINSTALL
+}
+
+# --- zip 包 ---
+package_zip() {
+    local arch=$1 binary_name=$2
+    echo "→ 打包 zip (${arch})..."
+
+    local zip_arch
+    local out_name
+    case "$arch" in
+        amd64) zip_arch=linux_amd64 ;;
+        x86)   zip_arch=linux_i386 ;;
+        armv7) zip_arch=linux_armv7 ;;
+        armv8) zip_arch=linux_arm64 ;;
+        *)     zip_arch=$arch ;;
+    esac
+
+    out_name="${PROJECT_NAME}-${VERSION}-${zip_arch}.zip"
+
+    local pkg_dir="${OUTPUT_DIR}/zip/${out_name%.zip}"
+    mkdir -p "${pkg_dir}"
+
+    # 复制二进制
+    cp "${OUTPUT_DIR}/${binary_name}" "${pkg_dir}/groot"
+    chmod 755 "${pkg_dir}/groot"
+
+    # 生成 install 脚本
+    generate_install_script "$arch" > "${pkg_dir}/install.sh"
+    chmod 755 "${pkg_dir}/install.sh"
+
+    # 打包为 zip（只包含二进制和安装脚本）
+    local abs_output_dir
+    abs_output_dir="$(cd "${OUTPUT_DIR}" && pwd)"
+    pushd "${pkg_dir}" >/dev/null
+    if command -v zip &>/dev/null; then
+        zip -q "${abs_output_dir}/${out_name}" groot install.sh
+        local ret=$?
+        popd >/dev/null
+        rm -rf "${OUTPUT_DIR}/zip"
+        if [ $ret -eq 0 ]; then
+            echo "  ✓ ${out_name}"
+            return 0
+        fi
+        echo "  ⚠ zip 打包失败"
+        return 1
+    else
+        # fallback: 使用 bsdtar 或 tar
+        if command -v bsdtar &>/dev/null; then
+            bsdtar -acf "${abs_output_dir}/${out_name}" groot install.sh 2>/dev/null
+            local ret=$?
+            popd >/dev/null
+            rm -rf "${OUTPUT_DIR}/zip"
+            if [ $ret -eq 0 ]; then
+                echo "  ✓ ${out_name} (bsdtar)"
+                return 0
+            fi
+            echo "  ⚠ bsdtar 打包失败"
+            return 1
+        fi
+        popd >/dev/null
+        rm -rf "${OUTPUT_DIR}/zip"
+        echo "  ⚠ 需要 zip 或 bsdtar，跳过打包"
         return 1
     fi
+}
+
+# ============================
+#  编译+打包
+# ============================
+
+build_and_package() {
+    local arch=$1 target=$2
+    local binary_name
+
+    IFS="/" read -r GOOS GOARCH <<< "$target"
+    binary_name="${PROJECT_NAME}_${GOOS}_${GOARCH}"
+    case "$GOARCH" in
+        "arm")  binary_name="${PROJECT_NAME}_${GOOS}_armv7" ;;
+        "arm64") binary_name="${PROJECT_NAME}_${GOOS}_armv8" ;;
+    esac
+
+    # 编译
+    if ! build_binary "$arch" "$target"; then
+        return 1
+    fi
+
+    echo ""
+
+    # 打包为 zip
+    if package_zip "$arch" "$binary_name"; then
+        rm -f "${OUTPUT_DIR}/${binary_name}"
+    else
+        echo "  ℹ 保留二进制文件: ${binary_name}"
+    fi
+}
+
+# 编译所有并打包
+build_all_and_package() {
+    local success=0 fail=0 current=0 total=${#TARGETS[@]}
+
+    if [ "$IS_TERMUX" -eq 1 ]; then
+        # Termux 环境只编译本机架构
+        local native_arch
+        case "$(uname -m)" in
+            armv7l)       native_arch=armv7 ;;
+            aarch64|arm64|armv8l) native_arch=armv8 ;;
+            x86_64|amd64) native_arch=amd64 ;;
+            i*86)         native_arch=x86 ;;
+            *)            native_arch=unknown ;;
+        esac
+        echo ""
+        echo "--- Termux 模式：仅编译 $native_arch ---"
+        if [ "$native_arch" != "unknown" ] && [ -n "${TARGETS[$native_arch]}" ]; then
+            build_and_package "$native_arch" "${TARGETS[$native_arch]}" && success=1 || fail=1
+        else
+            echo "✗ 无法识别 Termux 架构"
+            fail=1
+        fi
+    else
+        echo ""
+        echo "--- 编译并打包所有架构 ---"
+        for arch in "${!TARGETS[@]}"; do
+            current=$((current + 1))
+            echo "[${current}/${total}] $arch"
+            if build_and_package "$arch" "${TARGETS[$arch]}"; then
+                success=$((success + 1))
+            else
+                fail=$((fail + 1))
+            fi
+            echo ""
+        done
+    fi
+
+    echo "结果: 成功 $success / 失败 $fail / 总计 $total"
+    [ $fail -eq 0 ] || return 1
+    return 0
+}
+
+# 仅打包已有二进制
+package_existing() {
+    local arch=$1
+    local target="${TARGETS[$arch]}"
+    local GOOS GOARCH
+
+    if [ -z "$target" ]; then
+        echo "✗ 未知架构: $arch"
+        return 1
+    fi
+
+    IFS="/" read -r GOOS GOARCH <<< "$target"
+
+    local binary_name
+    binary_name="${PROJECT_NAME}_${GOOS}_${GOARCH}"
+    case "$GOARCH" in
+        "arm")  binary_name="${PROJECT_NAME}_${GOOS}_armv7" ;;
+        "arm64") binary_name="${PROJECT_NAME}_${GOOS}_armv8" ;;
+    esac
+
+    if [ ! -f "${OUTPUT_DIR}/${binary_name}" ]; then
+        echo "✗ 未找到二进制: ${OUTPUT_DIR}/${binary_name}"
+        echo "  请先编译: $0 build $arch"
+        return 1
+    fi
+
+    package_zip "$arch" "$binary_name"
 }
 
 # 列出输出文件
 list_output() {
     echo ""
-    echo "输出文件列表:"
+    echo "--- 输出文件 ---"
     echo "----------------------------------------"
     if [ -d "$OUTPUT_DIR" ]; then
-        ls -lh "$OUTPUT_DIR"
+        ls -lh "$OUTPUT_DIR" | grep -v '^total'
     fi
     echo "----------------------------------------"
-    echo ""
-    echo "架构说明:"
-    echo "  - amd64/x86: 适用于PC和服务器"
-    echo "  - armv7: 适用于32位ARM设备（树莓派2/3等）"
-    echo "  - armv8: 适用于64位ARM设备（树莓派4/5等）"
 }
 
-# 清理旧构建
+# 清理
 clean() {
-    echo "清理旧构建..."
-    
+    echo "清理构建输出..."
     if [ -d "$OUTPUT_DIR" ]; then
-        if rm -rf "$OUTPUT_DIR"/* 2>/dev/null; then
-            echo "✓ 清理完成"
-        else
-            echo "⚠ 清理完成，但可能有未删除的文件"
-        fi
+        rm -rf "$OUTPUT_DIR"/*
+        echo "✓ 清理完成"
     else
         echo "✓ 输出目录不存在，无需清理"
     fi
 }
 
-# 显示帮助
+# 安装依赖工具提示
+# 帮助
 show_help() {
     cat << EOF
 
-用法: $0 [选项]
+用法: $0 <命令> [选项]
 
-选项:
-    all         编译所有架构 (默认)
-    amd64       仅编译 Linux amd64
-    x86         仅编译 Linux 386
-    armv7       仅编译 Linux armv7
-    armv8       仅编译 Linux armv8
-    clean       清理旧构建文件
-    help        显示帮助信息
+命令:
+  all               编译所有架构并打包 (默认)
+  build <arch>      仅编译指定架构并打包
+  package <arch>    仅打包已有二进制为 zip
+  clean             清理构建文件
+  help              显示帮助
+
+架构:
+  amd64   64位 x86 (PC/服务器)
+  x86     32位 x86
+  armv7   32位 ARM (树莓派2/3)
+  armv8   64位 ARM (树莓派4/5/Termux)
+
+Termux 支持:
+  在 Termux 中运行本脚本会自动检测并进入 Termux 兼容模式:
+    - 只编译本机架构 (armv8 或 armv7)
+    - zip 包中的 install 脚本安装到 \$PREFIX/bin
+    - 附带 groot-uninstall 卸载脚本
 
 示例:
-    $0              # 编译所有架构
-    $0 amd64        # 仅编译 amd64
-    $0 clean        # 清理
-    $0 help         # 显示帮助
+  $0                         # 编译全部并打包
+  $0 build amd64             # 仅编译 amd64 并打包 zip
+  $0 package amd64           # 仅打包已有二进制为 zip
+  $0 clean                   # 清理
 
-支持架构:
-    - amd64  (64位 x86)
-    - x86    (32位 x86)
-    - armv7  (32位 ARM)
-    - armv8  (64位 ARM)
-
-适用设备:
-    - PC/服务器: amd64 或 x86
-    - 树莓派:
-      - 树莓派 2/3: armv7 (32位)
-      - 树莓派 4/5: armv8 (64位)
-    - Termux/Android:
-      - armv7: 适用于32位Android设备
-      - armv8: 适用于64位Android设备 (推荐)
-
-如何确定设备架构:
-    在终端运行 'uname -m' 查看架构
-    aarch64/arm64 → armv8
-    armv7l → armv7
-    x86_64 → amd64
-    i686/i386 → x86
+输出:
+  .zip 文件包含:
+    groot             二进制文件
+    install.sh        安装脚本 (安装到 /usr/local/bin/ 或 Termux 的 \$PREFIX/bin/，自动生成卸载命令)
 
 EOF
 }
 
-# 主函数
+# ============================
+#  主函数
+# ============================
+
 main() {
-    # 初始化
-    print_header
-    check_go_env
-    create_output_dir
-    
-    if [ $# -eq 0 ]; then
-        # 默认编译所有
-        echo ""
-        build_all
-    else
+    local cmd=""
+
+    # 简单解析参数
+    while [ $# -gt 0 ]; do
         case "$1" in
-            all)
-                echo ""
-                build_all
+            all|build|package|clean|help|--help|-h)
+                cmd="$1"
                 ;;
             amd64|x86|armv7|armv8)
-                if [ -n "${TARGETS[$1]}" ]; then
-                    echo ""
-                    if build_single "$1" "${TARGETS[$1]}"; then
-                        echo ""
-                        list_output
-                    fi
-                else
-                    echo "✗ 未知架构: $1"
-                    show_help
-                    exit 1
-                fi
-                ;;
-            clean)
-                echo ""
-                clean
-                ;;
-            help|--help|-h)
-                show_help
+                ARCH="$1"
                 ;;
             *)
                 echo "✗ 未知选项: $1"
@@ -262,8 +442,50 @@ main() {
                 exit 1
                 ;;
         esac
-    fi
+        shift
+    done
+
+    print_header
+    check_go_env
+    create_output_dir
+
+    case "${cmd:-all}" in
+        help|--help|-h)
+            show_help
+            ;;
+        clean)
+            clean
+            ;;
+        build)
+            if [ -z "$ARCH" ]; then
+                echo "✗ 请指定架构"
+                show_help
+                exit 1
+            fi
+            if [ -z "${TARGETS[$ARCH]}" ]; then
+                echo "✗ 未知架构: $ARCH"
+                exit 1
+            fi
+            build_and_package "$ARCH" "${TARGETS[$ARCH]}"
+            list_output
+            ;;
+        package)
+            if [ -z "$ARCH" ]; then
+                # 打包所有已有二进制
+                echo "打包所有已有二进制..."
+                for arch in "${!TARGETS[@]}"; do
+                    package_existing "$arch"
+                done
+            else
+                package_existing "$ARCH"
+            fi
+            list_output
+            ;;
+        all|*)
+            build_all_and_package
+            list_output
+            ;;
+    esac
 }
 
-# 运行
 main "$@"

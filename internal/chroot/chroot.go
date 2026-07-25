@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"groot/internal/cleanup"
 	"groot/internal/env"
 	"groot/internal/logger"
 	"groot/internal/mount"
@@ -29,6 +30,12 @@ func Run(rootfsPath string, customShell string) error {
 	// 验证 rootfs
 	if err := mount.ValidateRootfs(absRootfsPath, customShell); err != nil {
 		return err
+	}
+
+	// 在主机端提前清理 rootfs 中的宿主机环境痕迹
+	preHostname := env.GetHostname(absRootfsPath, cleanup.DefaultHostname)
+	if err := cleanup.CleanupRootfs(absRootfsPath, preHostname); err != nil {
+		logger.Warn("清理 rootfs 环境失败: %v", err)
 	}
 
 	// 检查权限
@@ -233,7 +240,7 @@ func ChildMain(rootfsPath string, customShell string, customUser string) error {
 		}
 	}
 
-// 告诉 dpkg 不需要 systemd
+	// 告诉 dpkg 不需要 systemd
 	_ = os.Setenv("SYSTEMD_IN_DOCKER", "1")
 	_ = os.Setenv("DEBIAN_FRONTEND", "noninteractive")
 	_ = os.Setenv("SYSTEMD_IGNORE_ENVIRONMENT", "1")
@@ -242,11 +249,11 @@ func ChildMain(rootfsPath string, customShell string, customUser string) error {
 	os.MkdirAll("/run/systemd/system", 0755)
 	os.MkdirAll("/run/systemd/private", 0700)
 	os.MkdirAll("/run/dbus", 0755)
-	
+
 	// 创建必要的文件来欺骗脚本
 	os.Create("/run/systemd/container")
 	os.Create("/run/systemd/systemd-logind")
-	
+
 	// 创建一个 fake systemd 二进制来处理基本命令
 	fakeSystemd := `#!/bin/bash
 exit 0`
@@ -362,9 +369,9 @@ echo "DEBUG: About to call real pacman" >&2
 exec /usr/bin/pacman "$@"
 `
 		wrapperPath := "/dev/shm/pacman"
-	_ = os.WriteFile(wrapperPath, []byte(wrapperScript), 0755)
-	logger.Info("Created pacman wrapper at %s", wrapperPath)
-	pacmanWrapper = "; export PATH=/dev/shm:/sbin:/usr/sbin:/bin:/usr/bin; echo 'Wrapper PATH: $PATH'"
+		_ = os.WriteFile(wrapperPath, []byte(wrapperScript), 0755)
+		logger.Info("Created pacman wrapper at %s", wrapperPath)
+		pacmanWrapper = "; export PATH=/dev/shm:/sbin:/usr/sbin:/bin:/usr/bin; echo 'Wrapper PATH: $PATH'"
 	}
 
 	fixScript := "if [ -f /var/lib/dpkg/info/libc6:amd64.postinst ]; then " +
@@ -384,7 +391,10 @@ exec /usr/bin/pacman "$@"
 		}
 	}
 
-	cmd = exec.Command("/bin/sh", "-c", fixScript+pacmanWrapper+"; export PATH=/dev/shm:/sbin:/usr/sbin:/bin:/usr/bin; SHELL="+shell+" exec "+shell)
+	// 以 login shell 方式启动，自动 source /etc/profile（覆盖 PS1、PATH 等）
+	// 启动前打印彩色广告横幅
+	bannerCmd := "printf '\\033[36m[Groot]\\033[0m \\033[32m如果你喜欢groot的话，请前往 https://gyscan.space 下载gyscan吧 [qwq]\\033[0m\\n'; "
+	cmd = exec.Command("/bin/sh", "-c", fixScript+pacmanWrapper+"; export PATH=/dev/shm:/sbin:/usr/sbin:/bin:/usr/bin; export ENV=/etc/profile; "+bannerCmd+"SHELL="+shell+" exec "+shell+" -l")
 	cmd.Env = newEnv
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

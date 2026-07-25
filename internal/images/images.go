@@ -142,6 +142,20 @@ func ListAvailableImages(cfg *ImagesConfig) error {
 	return nil
 }
 
+// openURL 使用系统默认浏览器打开指定 URL
+func openURL(url string) error {
+	openers := []string{"xdg-open", "open", "termux-open-url"}
+	for _, cmdName := range openers {
+		path, err := exec.LookPath(cmdName)
+		if err == nil {
+			cmd := exec.Command(path, url)
+			cmd.Stderr = os.Stderr
+			return cmd.Start()
+		}
+	}
+	return fmt.Errorf("未找到可用的浏览器打开工具（尝试 xdg-open、open、termux-open-url）")
+}
+
 func ensureWgetInstalled() error {
 	_, err := exec.LookPath("wget")
 	if err == nil {
@@ -424,6 +438,7 @@ func interactiveDownloadWhiptail(cfg *ImagesConfig, destDir string) error {
 			"ubuntu", "",
 			"alpine", "",
 			"kali", "",
+			"archarm", "Arch ARM（浏览器下载）",
 			"all", "",
 		)
 		if err != nil || distro == "" {
@@ -519,42 +534,33 @@ func interactiveDownloadWhiptail(cfg *ImagesConfig, destDir string) error {
 			}
 
 		case "kali":
-			// 确认是否跳转Kali官网
-			whiptailPath, _ := exec.LookPath("whiptail")
-			confirmMsg := "Kali Linux 的 rootfs 镜像需要从官网下载\n\nhttps://old.kali.org/nethunter-images/\n\n是否打开浏览器访问该页面？"
-			cmd := exec.Command(whiptailPath, "--title", "Kali Linux 下载", "--yesno", confirmMsg, "15", "60")
-			cmd.Stdin = os.Stdin
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-
-			if err := cmd.Run(); err == nil {
-				// 用户确认，尝试打开浏览器
-				kaliUrl := "https://old.kali.org/nethunter-images/"
-				fmt.Printf("正在打开 %s\n", kaliUrl)
-
-				// 尝试使用不同的浏览器打开命令
-				var openCmd *exec.Cmd
-				if _, err := exec.LookPath("xdg-open"); err == nil {
-					openCmd = exec.Command("xdg-open", kaliUrl)
-				} else if _, err := exec.LookPath("open"); err == nil {
-					openCmd = exec.Command("open", kaliUrl)
-				} else if _, err := exec.LookPath("cmd.exe"); err == nil {
-					openCmd = exec.Command("cmd.exe", "/c", "start", kaliUrl)
-				}
-
-				if openCmd != nil {
-					openCmd.Stdout = os.Stdout
-					openCmd.Stderr = os.Stderr
-					if err := openCmd.Start(); err != nil {
-						fmt.Printf("无法自动打开浏览器，请手动访问: %s\n", kaliUrl)
-					} else {
-						fmt.Printf("已为您打开浏览器，请访问: %s\n", kaliUrl)
-					}
-				} else {
-					fmt.Printf("请手动访问: %s\n", kaliUrl)
-				}
+			selectedKaliArch, err := runWhiptailMenu("架构", "请选择 Kali 架构:",
+				"amd64", "",
+				"arm64", "",
+				"armhf", "",
+				"back", "",
+			)
+			if err != nil || selectedKaliArch == "" || selectedKaliArch == "back" {
+				break
+			}
+			kaliUrl := fmt.Sprintf("https://kali.download/%s/", selectedKaliArch)
+			fmt.Printf("正在打开 %s 下载页面（架构: %s）\n", kaliUrl, selectedKaliArch)
+			if err := openURL(kaliUrl); err != nil {
+				fmt.Fprintf(os.Stderr, "无法自动打开浏览器，请手动访问：%s\n", kaliUrl)
 				return nil
 			}
+			fmt.Println("浏览器已打开，若未弹出请检查浏览器设置")
+			return nil
+
+		case "archarm":
+			archURL := "https://archlinuxarm.org/platforms/armv8/generic"
+			fmt.Printf("正在打开 Arch ARM 下载页面...\n")
+			if err := openURL(archURL); err != nil {
+				fmt.Fprintf(os.Stderr, "无法自动打开浏览器，请手动访问：%s\n", archURL)
+				return nil
+			}
+			fmt.Println("浏览器已打开，若未弹出请检查浏览器设置")
+			return nil
 		}
 	}
 }
@@ -566,7 +572,8 @@ func InteractiveDownloadSimple(cfg *ImagesConfig, destDir string) error {
 	fmt.Println("2. Ubuntu")
 	fmt.Println("3. Alpine")
 	fmt.Println("4. Kali Linux")
-	fmt.Println("5. 下载所有镜像")
+	fmt.Println("5. Arch ARM（浏览器下载）")
+	fmt.Println("6. 下载所有镜像")
 	fmt.Println("0. 退出")
 
 	var choice string
@@ -700,42 +707,46 @@ func InteractiveDownloadSimple(cfg *ImagesConfig, destDir string) error {
 	case "4":
 		// Kali Linux
 		fmt.Println("\n--- Kali Linux ---")
-		fmt.Println("Kali Linux 的 rootfs 镜像需要从官网下载")
-		fmt.Println("链接: https://old.kali.org/nethunter-images/")
-		fmt.Print("\n是否打开浏览器访问该页面？(y/n): ")
-
-		var confirm string
-		fmt.Scanln(&confirm)
-
-		if confirm == "y" || confirm == "Y" {
-			kaliUrl := "https://old.kali.org/nethunter-images/"
-			fmt.Printf("\n正在打开 %s\n", kaliUrl)
-
-			// 尝试使用不同的浏览器打开命令
-			var openCmd *exec.Cmd
-			if _, err := exec.LookPath("xdg-open"); err == nil {
-				openCmd = exec.Command("xdg-open", kaliUrl)
-			} else if _, err := exec.LookPath("open"); err == nil {
-				openCmd = exec.Command("open", kaliUrl)
-			} else if _, err := exec.LookPath("cmd.exe"); err == nil {
-				openCmd = exec.Command("cmd.exe", "/c", "start", kaliUrl)
+		kaliArchs := []string{"amd64", "arm64", "armhf"}
+		fmt.Println("请选择架构:")
+		for i, arch := range kaliArchs {
+			fmt.Printf("  %d. %s\n", i+1, arch)
+		}
+		fmt.Println("  0. 返回")
+		fmt.Print("\n请选择: ")
+		var archChoice string
+		fmt.Scanln(&archChoice)
+		if archChoice == "0" {
+			return nil
+		}
+		if archChoice >= "1" && archChoice <= fmt.Sprintf("%d", len(kaliArchs)) {
+			idx := int(archChoice[0]-'0') - 1
+			selectedArch := kaliArchs[idx]
+			kaliUrl := fmt.Sprintf("https://kali.download/%s/", selectedArch)
+			fmt.Printf("正在打开 %s 下载页面（架构: %s）\n", kaliUrl, selectedArch)
+			if err := openURL(kaliUrl); err != nil {
+				fmt.Fprintf(os.Stderr, "无法自动打开浏览器，请手动访问：%s\n", kaliUrl)
+				return nil
 			}
-
-			if openCmd != nil {
-				openCmd.Stdout = os.Stdout
-				openCmd.Stderr = os.Stderr
-				if err := openCmd.Start(); err != nil {
-					fmt.Printf("无法自动打开浏览器，请手动访问: %s\n", kaliUrl)
-				} else {
-					fmt.Printf("已为您打开浏览器，请访问: %s\n", kaliUrl)
-				}
-			} else {
-				fmt.Printf("请手动访问: %s\n", kaliUrl)
-			}
+			fmt.Println("浏览器已打开，若未弹出请检查浏览器设置")
+			return nil
 		}
 		return nil
 
 	case "5":
+		// Arch ARM
+		fmt.Println("\n--- Arch ARM ---")
+		fmt.Println("仅支持 armv8（aarch64）架构")
+		archURL := "https://archlinuxarm.org/platforms/armv8/generic"
+		fmt.Printf("正在打开 Arch ARM 下载页面...\n")
+		if err := openURL(archURL); err != nil {
+			fmt.Fprintf(os.Stderr, "无法自动打开浏览器，请手动访问：%s\n", archURL)
+			return nil
+		}
+		fmt.Println("浏览器已打开，若未弹出请检查浏览器设置")
+		return nil
+
+	case "6":
 		// 下载所有镜像
 		return DownloadAllImages(cfg, destDir)
 

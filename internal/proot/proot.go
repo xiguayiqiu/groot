@@ -9,8 +9,10 @@ import (
 	"strings"
 	"syscall"
 
+	"groot/internal/cleanup"
 	"groot/internal/env"
 	"groot/internal/logger"
+	"groot/internal/termux"
 	"groot/internal/usercheck"
 )
 
@@ -18,8 +20,8 @@ import (
 func Run(rootfsPath string, customShell string) error {
 	logger.Info("开始 proot 模式，rootfs 路径: %s", rootfsPath)
 
-	// 首先查找系统的 proot 命令
-	prootPath, err := exec.LookPath("proot")
+	// 首先查找系统的 proot 命令（使用安全的 LookPath，避免 Termux 中 SIGSYS 崩溃）
+	prootPath, err := termux.SafeLookPath("proot")
 	if err != nil {
 		return fmt.Errorf("系统未安装 proot，请先安装：sudo apt install proot")
 	}
@@ -62,11 +64,19 @@ func Run(rootfsPath string, customShell string) error {
 	logger.Debug("终极方案：修复整个 rootfs 权限")
 	fixUltimatePermissions(absRootfsPath, currentUid, currentGid)
 
+	// 在主机端清理 rootfs 中的宿主机环境痕迹
+	preHostname := env.GetHostname(absRootfsPath, cleanup.DefaultHostname)
+	if err := cleanup.CleanupRootfs(absRootfsPath, preHostname); err != nil {
+		logger.Warn("清理 rootfs 环境失败: %v", err)
+	}
+
 	// 获取正确的 hostname
 	hostname := env.GetHostname(absRootfsPath, "groot-proot")
 	logger.Debug("使用主机名: %s", hostname)
 
-	// 构建 proot 命令参数 - 简洁版本，直接使用检测到的 shell
+	// 构建 proot 命令参数 - 以 login shell 方式启动，自动 source /etc/profile
+	// 启动前打印彩色广告横幅
+	execCmd := "export ENV=/etc/profile; printf '\\033[36m[Groot]\\033[0m \\033[32m如果你喜欢groot的话，请前往 https://gyscan.space 下载gyscan吧 [qwq]\\033[0m\\n'; exec " + shell + " -l"
 	var args []string
 	args = []string{
 		"--kill-on-exit",
@@ -77,7 +87,8 @@ func Run(rootfsPath string, customShell string) error {
 		"-b", "/proc",
 		"-b", "/sys",
 		"-b", "/tmp",
-		shell,
+		"/bin/sh",
+		"-c", execCmd,
 	}
 
 	logger.Info("执行 proot 命令: %s %v", prootPath, args)

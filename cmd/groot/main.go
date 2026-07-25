@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"groot/internal/chroot"
@@ -13,12 +14,13 @@ import (
 	"groot/internal/mount"
 	"groot/internal/permission"
 	"groot/internal/proot"
+	"groot/internal/termux"
 
 	"github.com/urfave/cli/v2"
 )
 
 const (
-	version = "0.2"
+	version = "0.3"
 )
 
 func detectDistro() string {
@@ -292,6 +294,11 @@ func main() {
 				Name:  "l",
 				Usage: "列出支持的发行版列表",
 			},
+			&cli.BoolFlag{
+				Name:    "d",
+				Aliases: []string{"download"},
+				Usage:   "打开浏览器选择并下载 rootfs 镜像",
+			},
 		},
 		Before: func(cCtx *cli.Context) error {
 			if cCtx.Bool("debug") {
@@ -299,7 +306,8 @@ func main() {
 			} else if cCtx.Bool("verbose") {
 				logger.SetLevel(logger.LevelInfo)
 			} else {
-				logger.SetLevel(logger.LevelInfo)
+				// 非 verbose 模式只显示 WARN 及以上级别的日志
+				logger.SetLevel(logger.LevelWarn)
 			}
 			return nil
 		},
@@ -316,7 +324,18 @@ func main() {
 			cleanupPath := cCtx.String("k")
 			customShell := cCtx.String("b")
 			listDistros := cCtx.Bool("l")
+			download := cCtx.Bool("d")
 			args := cCtx.Args()
+
+			// -d/--download 模式：TUI 选择发行版并打开浏览器
+			if download {
+				return runDownload()
+			}
+
+			// -c 和 -p 模式下，第一个位置参数（若 -b 未指定）作为自定义 shell
+			if customShell == "" && (chrootPath != "" || prootPath != "") && args.Len() > 0 {
+				customShell = args.First()
+			}
 
 			if cCtx.NArg() > 0 {
 				if prootDistro == "" && chrootPath == "" && prootPath == "" && cleanupPath == "" && !listDistros {
@@ -485,15 +504,23 @@ func main() {
 				}
 				rootfsPath := args.First()
 
-				// 检查 proot 包是否有对应函数
-				switch prootDistro {
-				case "alpine":
-					return proot.RunAlpineProot(rootfsPath, customShell)
-				case "debian":
-					return proot.Run(rootfsPath, customShell)
-				default:
-					return fmt.Errorf("不支持的发行版：%s，当前支持 alpine 和 debian", prootDistro)
+				// 自动安装 proot（Termux 中）
+				if err := termux.EnsureProotInstalled(); err != nil {
+					return err
 				}
+
+				// 检查 proot 包是否有对应函数
+				// Termux 环境需要先清理 LD_PRELOAD
+				return termux.RunWithCleanEnv(func() error {
+					switch prootDistro {
+					case "alpine":
+						return proot.RunAlpineProot(rootfsPath, customShell)
+					case "debian":
+						return proot.Run(rootfsPath, customShell)
+					default:
+						return fmt.Errorf("不支持的发行版：%s，当前支持 alpine 和 debian", prootDistro)
+					}
+				})
 			}
 
 			return runProot(prootPath, customShell)
@@ -508,12 +535,93 @@ func main() {
 
 func runChroot(rootfsPath string, customShell string) error {
 	if !permission.IsRoot() {
+		// 在 Termux 环境下给出更友好的提示
+		if termux.IsTermux() {
+			return fmt.Errorf("当前设备没有 root 权限，仅支持 proot 模式（请使用 -p 参数）")
+		}
 		return fmt.Errorf("-c 参数（chroot）必须以 root 身份运行，请使用 sudo 或切换到 root 用户")
 	}
 
+	// 自动安装 chroot（Termux 中）
+	if err := termux.EnsureChrootInstalled(); err != nil {
+		return err
+	}
+
+	// Termux 环境：进入 chroot 前清理 LD_PRELOAD
+	if termux.IsTermux() {
+		termux.CleanupEnv()
+	}
 	return chroot.Run(rootfsPath, customShell)
 }
 
 func runProot(rootfsPath string, customShell string) error {
-	return proot.Run(rootfsPath, customShell)
+	// 自动安装 proot（Termux 中）
+	if err := termux.EnsureProotInstalled(); err != nil {
+		return err
+	}
+
+	// Termux 环境：proot 需要 unset LD_PRELOAD 才能正常工作
+	return termux.RunWithCleanEnv(func() error {
+		return proot.Run(rootfsPath, customShell)
+	})
+}
+
+// openURL 使用系统默认浏览器打开指定 URL（使用 SafeLookPath 避免 Termux SIGSYS）
+func openURL(url string) error {
+	openers := []string{"xdg-open", "open", "termux-open-url"}
+	for _, cmdName := range openers {
+		path, err := termux.SafeLookPath(cmdName)
+		if err == nil {
+			cmd := exec.Command(path, url)
+			cmd.Stderr = os.Stderr
+			return cmd.Start()
+		}
+	}
+	return fmt.Errorf("未找到可用的浏览器打开工具（尝试 xdg-open、open、termux-open-url）")
+}
+
+// downloadURLs 下载链接配置
+var downloadURLs = map[string]string{
+	"Void Linux": "https://voidlinux.org/download/",
+	"Alpine":     "https://alpinelinux.cn/downloads/",
+	"Kali":       "https://kali.download/",
+	"Arch ARM":   "https://archlinuxarm.org/platforms/armv8/generic",
+}
+
+// runDownload 文本菜单选择发行版并打开浏览器下载页面
+func runDownload() error {
+	names := make([]string, 0, len(downloadURLs))
+	for name := range downloadURLs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	// 文本菜单，兼容 Termux
+	fmt.Println()
+	fmt.Println("---- 选择要下载的发行版 ----")
+	for i, name := range names {
+		fmt.Printf("  %d. %s\n", i+1, name)
+	}
+	fmt.Println("  0. 取消")
+	fmt.Println("---------------------------")
+	fmt.Println("\033[36m如果没找到你想要的rootfs\033[0m\033[33m请使用\033[0m\033[32mpacstrap\033[0m、\033[35mdebootstrap\033[0m、\033[31mapkstrap\033[0m、\033[32mdnfstrap\033[0m\033[33m自行构建吧\033[0m\033[36m[QwQ]\033[0m")
+	fmt.Print("请输入数字: ")
+
+	var choice int
+	_, err := fmt.Scanf("%d", &choice)
+	if err != nil || choice < 1 || choice > len(names) {
+		fmt.Println("已取消")
+		return nil
+	}
+
+	selected := names[choice-1]
+	url := downloadURLs[selected]
+
+	fmt.Printf("正在打开 %s 下载页面: %s\n", selected, url)
+	if err := openURL(url); err != nil {
+		fmt.Fprintf(os.Stderr, "无法自动打开浏览器，请手动访问：%s\n", url)
+		return nil
+	}
+	fmt.Println("浏览器已打开，若未弹出请检查浏览器设置")
+	return nil
 }

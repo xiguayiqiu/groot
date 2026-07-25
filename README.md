@@ -96,7 +96,14 @@ groot 提供一站式 Linux 容器环境解决方案，从镜像下载到环境�
 - 编译后为单一二进制文件
 - 超快启动！
 
-## 🚀 快速开始
+### 📦 支持打包为系统安装包
+
+- 使用 `build.sh` 一键生成 **deb / rpm / pacman / apk** 安装包
+- 自动检测当前系统可用打包工具
+- 支持指定格式：`--format deb,rpm`
+- **Termux 支持**：自动识别 Termux 环境，只编译本机架构并打包 `.deb` 格式，安装到 `$PREFIX/bin`
+
+## � 快速开始
 
 ### 编译
 
@@ -104,9 +111,33 @@ groot 提供一站式 Linux 容器环境解决方案，从镜像下载到环境�
 go build -o groot ./cmd/groot
 ```
 
-### 使用
+### 一键编译打包
 
-#### 查看帮助
+使用 build.sh 脚本，自动编译并打包为系统安装包：
+
+```bash
+# 编译所有架构并打包所有格式 (自动检测可用工具)
+./build.sh
+
+# 只打包 deb 和 rpm
+./build.sh --format deb,rpm
+
+# 编译指定架构并打包
+./build.sh build amd64 --format deb
+
+# 仅打包已有二进制
+./build.sh package amd64 --format deb
+
+# 查看帮助
+./build.sh help
+```
+
+生成的安装包在 `build/` 目录下：
+
+- `groot_0.3_amd64.deb` — Debian/Ubuntu/Kali/Termux
+- `groot-0.3-1.x86_64.rpm` — Fedora/CentOS/RHEL
+- `groot-0.3-1-x86_64.pkg.tar.zst` — Arch/Manjaro
+- `groot-0.3.apk` — Alpine Linux
 
 ```bash
 ./groot --help
@@ -191,6 +222,9 @@ sudo ./groot -c /path/to/rootfs -b /bin/bash
 # 清理残留挂载点
 sudo ./groot -k /path/to/rootfs
 
+# 打开浏览器下载 rootfs 镜像
+./groot -d
+
 # 列出支持的发行版
 ./groot -l
 
@@ -209,7 +243,9 @@ groot/
 │   └── groot/
 │       └── main.go           # 主程序入口
 ├── internal/
-│   ├── images/              # 新增：镜像下载管理
+│   ├── cleanup/             # 宿主机环境清理
+│   ├── termux/              # Termux 环境检测与适配
+│   ├── images/              # 镜像下载管理
 │   │   └── images.go       # pm 子命令实现
 │   ├── chroot/
 │   │   └── chroot.go         # chroot 模式完美实现（含 Namespace）
@@ -227,6 +263,7 @@ groot/
 ├── images_manager/          # 新增：镜像配置
 │   └── images_update.jsonc # 镜像下载源配置
 ├── alpine/                   # Alpine Linux rootfs (示例)
+├── build.sh                 # 编译与打包脚本（支持 deb/rpm/pacman/apk）
 ├── go.mod
 ├── go.sum
 └── README.md
@@ -255,6 +292,42 @@ groot/
 
 ## 📖 版本历史
 
+- 2026-7.25->V0.3-功能增强与 Termux 适配
+  - **新增**: Termux 环境检测与自动适配（`internal/termux`）
+    - Termux 环境自动清理 `LD_PRELOAD` 避免冲突
+    - Android root 权限检测，无 root 自动提示使用 proot 模式
+    - Termux 中 proot/chroot 未安装时自动 `pkg install -y proot`
+    - 安全的 `SafeLookPath` 绕过 proot 嵌套中 `faccessat2` 被 seccomp 拦截的问题
+  - **新增**: 宿主机环境自动清理（`internal/cleanup`）
+    - 清理 `/etc/hosts` 中的宿主机私有 IP 条目，保留 rootfs 本地回环
+    - 清理 `/etc/resolv.conf` 中的宿主机私有 DNS
+    - 保留 rootfs 自己的 hostname，仅在缺失时补充默认
+    - 清空 machine-id、shell 历史、SSH known_hosts、/var/log、/tmp
+    - chroot 与 proot 模式均自动执行
+  - **改进**: Profile 加载方式
+    - 三种模式统一使用 `exec shell -l`（login shell）方式启动
+    - 自动加载 rootfs 自己的 `/etc/profile` 和 `/etc/profile.d/*.sh`
+  - **改进**: 日志系统支持 ANSI 彩色输出
+    - `[DEBUG]` 蓝色、`[INFO]` 绿色、`[WARN]` 黄色、`[ERROR]` 红色
+    - 非终端输出时自动禁用颜色
+  - **改进**: 默认只显示 WARN/ERROR 级别日志，`--verbose` 显示完整 INFO 流程
+  - **新增**: 启动后打印彩色广告横幅
+  - **新增**: 支持位置参数作为自定义 shell（`groot -c rootfs /bin/bash`）
+  - **改进**: 所有 `exec.LookPath` 替换为 `termux.SafeLookPath`，避免 SIGSYS 崩溃
+  - **修复**: Termux 下执行 `pkg install proot` 自动安装时再次崩溃（同样是 faccessat2 被拦截），改为先找到 pkg 完整路径再执行
+  - **新增**: `-d/--download` 参数，文本菜单选择发行版并用浏览器打开下载页面
+    - 支持 Void Linux、Alpine、Kali、Arch 四款发行版下载链接
+    - 纯文本菜单兼容 Termux
+    - 优先使用 `termux-open-url` 支持 Termux 环境
+    - 彩色多色提示文字
+  - **新增**: `build.sh` 支持一键打包为系统安装包
+    - `.deb` — Debian/Ubuntu/Kali (需 dpkg-deb)
+    - `.rpm` — Fedora/CentOS/RHEL (需 rpmbuild)
+    - `.pkg.tar.zst` — Arch/Manjaro (需 bsdtar + zstd)
+    - `.apk` — Alpine Linux (需 tar)
+    - 自动检测可用打包工具，支持 `--format` 指定格式
+     - 仅在本机架构上打包，避免交叉打包问题
+     - **Termux 兼容**：自动检测 Termux 环境，只编译本机架构，打包 .deb 到 `$PREFIX/bin`
 - 2026-5.4->V0.2-pm make 功能增强
   - 新增 pm make 子命令，支持从源码构建 rootfs 镜像
   - 支持 Debian/Ubuntu 使用 debootstrap 构建
