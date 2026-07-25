@@ -32,6 +32,7 @@ groot 提供一站式 Linux 容器环境解决方案，从镜像下载到环境�
 | Alpine     | amd32   | -            |
 | Alpine     | arm64   | -            |
 | Alpine     | arm32   | -            |
+| Arch       | arm64 (ARM) | -            |
 | Kali Linux | 多版本     | -            |
 
 ### 🔐 多模式支持
