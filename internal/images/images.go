@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"groot/internal/termux"
 )
 
 //go:embed images_update.jsonc
@@ -146,7 +148,7 @@ func ListAvailableImages(cfg *ImagesConfig) error {
 func openURL(url string) error {
 	openers := []string{"xdg-open", "open", "termux-open-url"}
 	for _, cmdName := range openers {
-		path, err := exec.LookPath(cmdName)
+		path, err := termux.SafeLookPath(cmdName)
 		if err == nil {
 			cmd := exec.Command(path, url)
 			cmd.Stderr = os.Stderr
@@ -157,31 +159,43 @@ func openURL(url string) error {
 }
 
 func ensureWgetInstalled() error {
-	_, err := exec.LookPath("wget")
-	if err == nil {
+	if _, err := termux.SafeLookPath("wget"); err == nil {
 		return nil
 	}
 
 	fmt.Println("检测到系统未安装wget，正在安装...")
 
-	var installCmd *exec.Cmd
-
-	if _, err := exec.LookPath("apt"); err == nil {
-		installCmd = exec.Command("apt", "install", "-y", "wget")
-	} else if _, err := exec.LookPath("dnf"); err == nil {
-		installCmd = exec.Command("dnf", "install", "-y", "wget")
-	} else if _, err := exec.LookPath("yum"); err == nil {
-		installCmd = exec.Command("yum", "install", "-y", "wget")
-	} else if _, err := exec.LookPath("pacman"); err == nil {
-		installCmd = exec.Command("pacman", "-S", "--noconfirm", "wget")
-	} else if _, err := exec.LookPath("apk"); err == nil {
-		installCmd = exec.Command("apk", "add", "--no-cache", "wget")
-	} else if _, err := exec.LookPath("xbps-install"); err == nil {
-		installCmd = exec.Command("xbps-install", "-y", "wget")
-	} else {
+	var pkgMgr string
+	if _, err := termux.SafeLookPath("apt"); err == nil {
+		pkgMgr = "apt"
+	} else if _, err := termux.SafeLookPath("dnf"); err == nil {
+		pkgMgr = "dnf"
+	} else if _, err := termux.SafeLookPath("yum"); err == nil {
+		pkgMgr = "yum"
+	} else if _, err := termux.SafeLookPath("pacman"); err == nil {
+		pkgMgr = "pacman"
+	} else if _, err := termux.SafeLookPath("apk"); err == nil {
+		pkgMgr = "apk"
+	} else if _, err := termux.SafeLookPath("xbps-install"); err == nil {
+		pkgMgr = "xbps-install"
+	}
+	if pkgMgr == "" {
 		return fmt.Errorf("无法检测到系统包管理器，请手动安装wget")
 	}
 
+	args := map[string][]string{
+		"apt":          {"install", "-y", "wget"},
+		"dnf":          {"install", "-y", "wget"},
+		"yum":          {"install", "-y", "wget"},
+		"pacman":       {"-S", "--noconfirm", "wget"},
+		"apk":          {"add", "--no-cache", "wget"},
+		"xbps-install": {"-y", "wget"},
+	}
+
+	installCmd, err := termux.Command(pkgMgr, args[pkgMgr]...)
+	if err != nil {
+		return fmt.Errorf("无法执行 %s: %v", pkgMgr, err)
+	}
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr
 	installCmd.Stdin = os.Stdin
@@ -233,7 +247,10 @@ func DownloadImage(url, destDir string) error {
 
 	fmt.Printf("正在下载: %s -> %s\n", url, destPath)
 
-	wgetCmd := exec.Command("wget", "-O", destPath, url)
+	wgetCmd, err := termux.Command("wget", "-O", destPath, url)
+	if err != nil {
+		return fmt.Errorf("wget 未找到: %v", err)
+	}
 	wgetCmd.Stdout = os.Stdout
 	wgetCmd.Stderr = os.Stderr
 	wgetCmd.Stdin = os.Stdin
@@ -296,7 +313,7 @@ func DownloadBySelection(cfg *ImagesConfig, destDir, distro, selection string) e
 }
 
 func runWhiptailMenu(title, prompt string, items ...string) (string, error) {
-	whiptailPath, err := exec.LookPath("whiptail")
+	whiptailPath, err := termux.SafeLookPath("whiptail")
 	if err != nil {
 		return "", err
 	}
@@ -335,7 +352,7 @@ func runWhiptailMenu(title, prompt string, items ...string) (string, error) {
 }
 
 func InteractiveDownload(cfg *ImagesConfig, destDir string) error {
-	if _, err := exec.LookPath("whiptail"); err == nil {
+	if _, err := termux.SafeLookPath("whiptail"); err == nil {
 		return interactiveDownloadWhiptail(cfg, destDir)
 	}
 	// 如果 whiptail 没有找到，先尝试安装
@@ -344,20 +361,26 @@ func InteractiveDownload(cfg *ImagesConfig, destDir string) error {
 	fmt.Printf("检测到当前系统是: %s\n", distro)
 	switch distro {
 	case "alpine":
-		if _, err := exec.LookPath("apk"); err == nil {
-			cmd := exec.Command("apk", "add", "--no-cache", "newt")
+		if _, err := termux.SafeLookPath("apk"); err == nil {
+			cmd, err := termux.Command("apk", "add", "--no-cache", "newt")
+			if err != nil {
+				break
+			}
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err == nil {
-				if _, err := exec.LookPath("whiptail"); err == nil {
+				if _, err := termux.SafeLookPath("whiptail"); err == nil {
 					return interactiveDownloadWhiptail(cfg, destDir)
 				}
 			}
 		}
 	case "void":
-		if _, err := exec.LookPath("xbps-install"); err == nil {
+		if _, err := termux.SafeLookPath("xbps-install"); err == nil {
 			fmt.Println("找到 xbps-install，正在安装 newt 包...")
-			cmd := exec.Command("xbps-install", "-Sy", "newt")
+			cmd, err := termux.Command("xbps-install", "-Sy", "newt")
+			if err != nil {
+				break
+			}
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			cmd.Stdin = os.Stdin
@@ -365,7 +388,7 @@ func InteractiveDownload(cfg *ImagesConfig, destDir string) error {
 				fmt.Printf("安装 newt 失败: %v\n", err)
 			} else {
 				fmt.Println("安装 newt 成功，检查 whiptail 是否存在...")
-				if _, err := exec.LookPath("whiptail"); err == nil {
+				if _, err := termux.SafeLookPath("whiptail"); err == nil {
 					fmt.Println("找到 whiptail，启动交互式菜单...")
 					return interactiveDownloadWhiptail(cfg, destDir)
 				} else {

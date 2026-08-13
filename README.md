@@ -293,6 +293,13 @@ groot/
 
 ## 📖 版本历史
 
+- 2026-8.13->V0.3.1-Termux 跨平台崩溃修复
+  - **修复**: Termux 下 `pm download` 仍崩溃（SIGSYS/faccessat2）的问题
+    - 根因：`exec.Command("wget", ...)` 等命令名调用会在**内部再次隐式调用 `LookPath`**，即使此前已替换了显式的 `exec.LookPath`，仍会触发 `faccessat2` 被 seccomp 拦截导致 `SIGSYS`
+    - 在 `internal/termux` 新增 `Command(name, args...)` 与 `CommandSlice(args[])` 安全封装，先经 `SafeLookPath` 解析绝对路径再执行，避免内部的 `LookPath` 调用
+    - 将 `images.go` / `rootfs-make.go` / `main.go` / `distro.go` 中所有裸命令名 `exec.Command(...)` 改为安全封装（覆盖 `wget` / `apt` / `apk` / `xbps-install` / `debootstrap` / `pacstrap` / `bash` / `git` / `make` / `lsb_release` 等）
+    - 绝对路径调用（`/system/bin/sh`、`/bin/sh`）及已解析路径的变量（`whiptailPath`、`prootPath` 等）保持不变
+    - 已通过 `linux/amd64`、`linux/arm64`、`linux/arm`、`android/arm64` 交叉编译与 `go vet` 验证，跨平台行为一致
 - 2026-7.25->V0.3-功能增强与 Termux 适配
   - **新增**: Termux 环境检测与自动适配（`internal/termux`）
     - Termux 环境自动清理 `LD_PRELOAD` 避免冲突

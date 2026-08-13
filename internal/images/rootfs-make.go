@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"groot/internal/permission"
+	"groot/internal/termux"
 )
 
 type BuildType string
@@ -197,7 +198,10 @@ func buildDebootstrap(config BuildConfig) error {
 		mirror,
 	}
 
-	cmd := exec.Command("debootstrap", args...)
+	cmd, err := termux.Command("debootstrap", args...)
+	if err != nil {
+		return fmt.Errorf("debootstrap 未找到: %v", err)
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -236,7 +240,10 @@ func buildDebootstrap(config BuildConfig) error {
 			"&&",
 			"apt-get", "install", "-y", "--no-install-recommends",
 		}, extraPackages...)
-		installCmd := exec.Command("bash", "-c", strings.Join(installArgs, " "))
+		installCmd, err := termux.Command("bash", "-c", strings.Join(installArgs, " "))
+		if err != nil {
+			return fmt.Errorf("bash 未找到: %v", err)
+		}
 		installCmd.Stdout = os.Stdout
 		installCmd.Stderr = os.Stderr
 		installCmd.Stdin = os.Stdin
@@ -318,7 +325,10 @@ Include = %s/mirrorlist
 		targetDir,
 	}, packages...)
 
-	cmd := exec.Command("pacstrap", args...)
+	cmd, err := termux.Command("pacstrap", args...)
+	if err != nil {
+		return fmt.Errorf("pacstrap 未找到: %v", err)
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -332,7 +342,7 @@ Include = %s/mirrorlist
 }
 
 func checkTool(tool string) error {
-	_, err := exec.LookPath(tool)
+	_, err := termux.SafeLookPath(tool)
 	if err == nil {
 		return nil
 	}
@@ -423,7 +433,10 @@ func installWithApt(tool string) error {
 	}
 
 	fmt.Printf("Installing %s using apt...\n", pkgName)
-	cmd := exec.Command("apt", "install", "-y", pkgName)
+	cmd, err := termux.Command("apt", "install", "-y", pkgName)
+	if err != nil {
+		return fmt.Errorf("apt 未找到: %v", err)
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -432,7 +445,7 @@ func installWithApt(tool string) error {
 		return err
 	}
 
-	if _, err := exec.LookPath(tool); err != nil {
+	if _, err := termux.SafeLookPath(tool); err != nil {
 		return err
 	}
 
@@ -454,7 +467,10 @@ func installWithPacman(tool string) error {
 	}
 
 	fmt.Printf("Installing %s using pacman...\n", pkgName)
-	cmd := exec.Command("pacman", "-S", "--noconfirm", pkgName)
+	cmd, err := termux.Command("pacman", "-S", "--noconfirm", pkgName)
+	if err != nil {
+		return fmt.Errorf("pacman 未找到: %v", err)
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -463,7 +479,7 @@ func installWithPacman(tool string) error {
 		return err
 	}
 
-	if _, err := exec.LookPath(tool); err != nil {
+	if _, err := termux.SafeLookPath(tool); err != nil {
 		return err
 	}
 
@@ -476,7 +492,7 @@ func InteractiveMakeRootfs(destDir string) error {
 		return fmt.Errorf("error: building rootfs requires root permission, please use sudo")
 	}
 
-	if _, err := exec.LookPath("whiptail"); err == nil {
+	if _, err := termux.SafeLookPath("whiptail"); err == nil {
 		return interactiveMakeRootfsWhiptail(destDir)
 	}
 	// 如果 whiptail 没有找到，先尝试安装
@@ -485,20 +501,26 @@ func InteractiveMakeRootfs(destDir string) error {
 	fmt.Printf("检测到当前系统是: %s\n", distro)
 	switch distro {
 	case "alpine":
-		if _, err := exec.LookPath("apk"); err == nil {
-			cmd := exec.Command("apk", "add", "--no-cache", "newt")
+		if _, err := termux.SafeLookPath("apk"); err == nil {
+			cmd, err := termux.Command("apk", "add", "--no-cache", "newt")
+			if err != nil {
+				break
+			}
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err == nil {
-				if _, err := exec.LookPath("whiptail"); err == nil {
+				if _, err := termux.SafeLookPath("whiptail"); err == nil {
 					return interactiveMakeRootfsWhiptail(destDir)
 				}
 			}
 		}
 	case "void":
-		if _, err := exec.LookPath("xbps-install"); err == nil {
+		if _, err := termux.SafeLookPath("xbps-install"); err == nil {
 			fmt.Println("找到 xbps-install，正在安装 newt 包...")
-			cmd := exec.Command("xbps-install", "-Sy", "newt")
+			cmd, err := termux.Command("xbps-install", "-Sy", "newt")
+			if err != nil {
+				break
+			}
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			cmd.Stdin = os.Stdin
@@ -506,7 +528,7 @@ func InteractiveMakeRootfs(destDir string) error {
 				fmt.Printf("安装 newt 失败: %v\n", err)
 			} else {
 				fmt.Println("安装 newt 成功，检查 whiptail 是否存在...")
-				if _, err := exec.LookPath("whiptail"); err == nil {
+				if _, err := termux.SafeLookPath("whiptail"); err == nil {
 					fmt.Println("找到 whiptail，启动交互式菜单...")
 					return interactiveMakeRootfsWhiptail(destDir)
 				} else {
@@ -636,7 +658,7 @@ Build Directory: %s
 
 Start building?`, distro, version, arch, buildType, mirror, destDir)
 
-	whiptailPath, _ := exec.LookPath("whiptail")
+	whiptailPath, _ := termux.SafeLookPath("whiptail")
 	cmd := exec.Command(whiptailPath, "--title", "Confirm Configuration", "--yesno", confirmMsg, "18", "60")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -663,7 +685,7 @@ func runWhiptailInput(title, prompt, defaultValue string) (string, error) {
 }
 
 func runWhiptailInputWithSize(title, prompt, defaultValue, height, width string) (string, error) {
-	whiptailPath, err := exec.LookPath("whiptail")
+	whiptailPath, err := termux.SafeLookPath("whiptail")
 	if err != nil {
 		return "", err
 	}

@@ -2,9 +2,10 @@ package permission
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"groot/internal/termux"
 )
 
 // IsRoot 检查是否是真实 root 权限
@@ -50,7 +51,7 @@ func FindSu() string {
 	}
 
 	// 也可以尝试 PATH 中的 su
-	if pathSu, err := exec.LookPath("su"); err == nil {
+	if pathSu, err := termux.SafeLookPath("su"); err == nil {
 		return pathSu
 	}
 
@@ -113,7 +114,7 @@ func GetExecutablePath() string {
 	}
 
 	// 尝试在 PATH 中查找
-	if path, err := exec.LookPath(os.Args[0]); err == nil {
+	if path, err := termux.SafeLookPath(os.Args[0]); err == nil {
 		if absPath, err := filepath.Abs(path); err == nil {
 			return absPath
 		}

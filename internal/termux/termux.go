@@ -111,6 +111,37 @@ func SafeLookPath(name string) (string, error) {
 	return "", fmt.Errorf("%s: 在 PATH 中未找到", name)
 }
 
+// Command 等价于 exec.Command，但会先用 SafeLookPath 解析命令的绝对路径，
+// 避免 exec.Command 内部对命令名调用 LookPath → faccessat2 触发 SIGSYS。
+// 仅当 name 看起来是命令名（不含 "/"）时才解析，绝对路径/变量直接透传。
+func Command(name string, args ...string) (*exec.Cmd, error) {
+	if !strings.Contains(name, "/") {
+		resolved, err := SafeLookPath(name)
+		if err != nil {
+			return nil, err
+		}
+		name = resolved
+	}
+	return exec.Command(name, args...), nil
+}
+
+// CommandSlice 等价于 exec.Command(args[0], args[1:]...)，但会先用
+// SafeLookPath 解析 args[0] 的绝对路径，避免内部 LookPath → faccessat2 → SIGSYS。
+func CommandSlice(args []string) (*exec.Cmd, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("CommandSlice: 空参数")
+	}
+	name := args[0]
+	if !strings.Contains(name, "/") {
+		resolved, err := SafeLookPath(name)
+		if err != nil {
+			return nil, err
+		}
+		name = resolved
+	}
+	return exec.Command(name, args[1:]...), nil
+}
+
 // CleanupEnv 清理当前进程环境变量中的 Termux 残留，返回清理前的 LD_PRELOAD 值。
 // 在 Termux 环境下启动 chroot/proot 之前调用。
 func CleanupEnv() string {

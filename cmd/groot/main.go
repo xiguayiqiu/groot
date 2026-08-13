@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	version = "0.3"
+	version = "0.3.1"
 )
 
 func detectDistro() string {
@@ -345,7 +345,7 @@ func main() {
 
 			if listDistros {
 				// 检查 whiptail 是否可用
-				whiptailPath, err := exec.LookPath("whiptail")
+				whiptailPath, err := termux.SafeLookPath("whiptail")
 				if err != nil {
 					// 尝试安装 whiptail
 					fmt.Println("提示: whiptail 没有找到，尝试安装它以获得更好的交互体验...")
@@ -354,8 +354,11 @@ func main() {
 					installed := false
 					switch distro {
 					case "alpine":
-						if _, err := exec.LookPath("apk"); err == nil {
-							cmd := exec.Command("apk", "add", "--no-cache", "newt")
+						if _, err := termux.SafeLookPath("apk"); err == nil {
+							cmd, err := termux.Command("apk", "add", "--no-cache", "newt")
+							if err != nil {
+								break
+							}
 							cmd.Stdout = os.Stdout
 							cmd.Stderr = os.Stderr
 							if err := cmd.Run(); err == nil {
@@ -363,9 +366,12 @@ func main() {
 							}
 						}
 					case "void":
-						if _, err := exec.LookPath("xbps-install"); err == nil {
+						if _, err := termux.SafeLookPath("xbps-install"); err == nil {
 							fmt.Println("找到 xbps-install，正在安装 newt 包...")
-							cmd := exec.Command("xbps-install", "-Sy", "newt")
+							cmd, err := termux.Command("xbps-install", "-Sy", "newt")
+							if err != nil {
+								break
+							}
 							cmd.Stdout = os.Stdout
 							cmd.Stderr = os.Stderr
 							cmd.Stdin = os.Stdin
@@ -378,9 +384,12 @@ func main() {
 							fmt.Printf("未找到 xbps-install: %v\n", err)
 						}
 					case "debian":
-						if _, err := exec.LookPath("apt"); err == nil {
+						if _, err := termux.SafeLookPath("apt"); err == nil {
 							fmt.Println("找到 apt，正在安装 newt 包...")
-							cmd := exec.Command("apt", "install", "-y", "newt")
+							cmd, err := termux.Command("apt", "install", "-y", "newt")
+							if err != nil {
+								break
+							}
 							cmd.Stdout = os.Stdout
 							cmd.Stderr = os.Stderr
 							cmd.Stdin = os.Stdin
@@ -389,9 +398,12 @@ func main() {
 							}
 						}
 					case "arch":
-						if _, err := exec.LookPath("pacman"); err == nil {
+						if _, err := termux.SafeLookPath("pacman"); err == nil {
 							fmt.Println("找到 pacman，正在安装 newt 包...")
-							cmd := exec.Command("pacman", "-S", "--noconfirm", "newt")
+							cmd, err := termux.Command("pacman", "-S", "--noconfirm", "newt")
+							if err != nil {
+								break
+							}
 							cmd.Stdout = os.Stdout
 							cmd.Stderr = os.Stderr
 							cmd.Stdin = os.Stdin
@@ -402,7 +414,7 @@ func main() {
 					}
 
 					if installed {
-						whiptailPath, err = exec.LookPath("whiptail")
+						whiptailPath, err = termux.SafeLookPath("whiptail")
 					}
 
 					if err != nil {

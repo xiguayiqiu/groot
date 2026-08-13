@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"groot/internal/logger"
+	"groot/internal/termux"
 )
 
 type Distro struct {
@@ -49,14 +50,16 @@ func DetectDistro() (*Distro, error) {
 	}
 
 	// 尝试 lsb_release (某些系统)
-	if out, err := exec.Command("lsb_release", "-is").Output(); err == nil {
-		id := strings.ToLower(strings.TrimSpace(string(out)))
-		if id != "" {
-			name, _ := exec.Command("lsb_release", "-ds").Output()
-			return &Distro{
-				ID:     id,
-				Name:   strings.TrimSpace(string(name)),
-			}, nil
+	if lsbPath, err := termux.SafeLookPath("lsb_release"); err == nil {
+		if out, err := exec.Command(lsbPath, "-is").Output(); err == nil {
+			id := strings.ToLower(strings.TrimSpace(string(out)))
+			if id != "" {
+				name, _ := exec.Command(lsbPath, "-ds").Output()
+				return &Distro{
+					ID:   id,
+					Name: strings.TrimSpace(string(name)),
+				}, nil
+			}
 		}
 	}
 
@@ -135,14 +138,14 @@ type ArchInstaller struct{}
 func NewArchInstaller() *ArchInstaller { return &ArchInstaller{} }
 func (a *ArchInstaller) Name() string   { return "pacman" }
 func (a *ArchInstaller) CheckInstalled() (bool, bool) {
-	_, err1 := exec.LookPath("chroot")
-	_, err2 := exec.LookPath("proot")
+	_, err1 := termux.SafeLookPath("chroot")
+	_, err2 := termux.SafeLookPath("proot")
 	return err1 == nil, err2 == nil
 }
 func (a *ArchInstaller) Install() error {
 	args := []string{"-S", "--noconfirm", "coreutils", "proot"}
 	if os.Geteuid() != 0 {
-		if sudo, err := exec.LookPath("sudo"); err == nil {
+		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			args = append([]string{sudo, "pacman"}, args...)
 		} else {
 			return fmt.Errorf("需要 root 权限，请使用 sudo")
@@ -150,7 +153,10 @@ func (a *ArchInstaller) Install() error {
 	} else {
 		args = append([]string{"pacman"}, args...)
 	}
-	cmd := exec.Command(args[0], args[1:]...)
+	cmd, err := termux.CommandSlice(args)
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -162,15 +168,15 @@ type DebianInstaller struct{}
 func NewDebianInstaller() *DebianInstaller { return &DebianInstaller{} }
 func (d *DebianInstaller) Name() string    { return "apt" }
 func (d *DebianInstaller) CheckInstalled() (bool, bool) {
-	_, err1 := exec.LookPath("chroot")
-	_, err2 := exec.LookPath("proot")
+	_, err1 := termux.SafeLookPath("chroot")
+	_, err2 := termux.SafeLookPath("proot")
 	return err1 == nil, err2 == nil
 }
 func (d *DebianInstaller) Install() error {
 	// 先 update
 	updateCmd := []string{"apt", "update", "-y"}
 	if os.Geteuid() != 0 {
-		if sudo, err := exec.LookPath("sudo"); err == nil {
+		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			updateCmd = append([]string{sudo}, updateCmd...)
 		} else {
 			return fmt.Errorf("需要 root 权限，请使用 sudo")
@@ -178,7 +184,10 @@ func (d *DebianInstaller) Install() error {
 	} else {
 		// 保持原命令
 	}
-	cmd := exec.Command(updateCmd[0], updateCmd[1:]...)
+	cmd, err := termux.CommandSlice(updateCmd)
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -189,14 +198,17 @@ func (d *DebianInstaller) Install() error {
 	// 再 install
 	args := []string{"apt", "install", "-y", "coreutils", "proot"}
 	if os.Geteuid() != 0 {
-		if sudo, err := exec.LookPath("sudo"); err == nil {
+		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			args = append([]string{sudo}, args...)
 		} else {
 			return fmt.Errorf("需要 root 权限，请使用 sudo")
 		}
 	}
 
-	cmd = exec.Command(args[0], args[1:]...)
+	cmd, err = termux.CommandSlice(args)
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -208,13 +220,13 @@ type RedHatInstaller struct{}
 func NewRedHatInstaller() *RedHatInstaller { return &RedHatInstaller{} }
 func (r *RedHatInstaller) Name() string    { return "dnf/yum + 源码编译 proot" }
 func (r *RedHatInstaller) CheckInstalled() (bool, bool) {
-	_, err1 := exec.LookPath("chroot")
-	_, err2 := exec.LookPath("proot")
+	_, err1 := termux.SafeLookPath("chroot")
+	_, err2 := termux.SafeLookPath("proot")
 	return err1 == nil, err2 == nil
 }
 func (r *RedHatInstaller) Install() error {
 	pkgMan := "dnf"
-	if _, err := exec.LookPath("dnf"); err != nil {
+	if _, err := termux.SafeLookPath("dnf"); err != nil {
 		pkgMan = "yum"
 	}
 
@@ -224,7 +236,7 @@ func (r *RedHatInstaller) Install() error {
 		logger.Info("Fedora 检测到，尝试直接安装 proot...")
 		args := []string{"install", "-y", "coreutils", "proot"}
 		if os.Geteuid() != 0 {
-			if sudo, err := exec.LookPath("sudo"); err == nil {
+			if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 				args = append([]string{sudo, "dnf"}, args...)
 			} else {
 				return fmt.Errorf("需要 root 权限，请使用 sudo")
@@ -232,11 +244,14 @@ func (r *RedHatInstaller) Install() error {
 		} else {
 			args = append([]string{"dnf"}, args...)
 		}
-		cmd := exec.Command(args[0], args[1:]...)
+		cmd, err := termux.CommandSlice(args)
+		if err != nil {
+			return err
+		}
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		err := cmd.Run()
+		err = cmd.Run()
 		if err == nil {
 			logger.Info("Fedora 上成功安装 proot")
 			return nil
@@ -253,7 +268,7 @@ func (r *RedHatInstaller) Install() error {
 	devDeps = append(devDeps, "install", "-y", "libarchive-devel", "talloc-devel", "uthash-devel", "git")
 
 	if os.Geteuid() != 0 {
-		if sudo, err := exec.LookPath("sudo"); err == nil {
+		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			devDeps = append([]string{sudo, pkgMan}, devDeps...)
 		} else {
 			return fmt.Errorf("需要 root 权限，请使用 sudo")
@@ -261,7 +276,10 @@ func (r *RedHatInstaller) Install() error {
 	} else {
 		devDeps = append([]string{pkgMan}, devDeps...)
 	}
-	cmd := exec.Command(devDeps[0], devDeps[1:]...)
+	cmd, err := termux.CommandSlice(devDeps)
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -277,7 +295,11 @@ func (r *RedHatInstaller) Install() error {
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return err
 	}
-	cmd = exec.Command("git", "clone", "https://github.com/proot-me/proot.git", tempDir)
+	gitPath, err := termux.SafeLookPath("git")
+	if err != nil {
+		return fmt.Errorf("git 未找到: %v", err)
+	}
+	cmd = exec.Command(gitPath, "clone", "https://github.com/proot-me/proot.git", tempDir)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -287,7 +309,11 @@ func (r *RedHatInstaller) Install() error {
 
 	// 3. make
 	logger.Info("正在编译 proot...")
-	cmd = exec.Command("make", "-C", tempDir)
+	makePath, err := termux.SafeLookPath("make")
+	if err != nil {
+		return fmt.Errorf("make 未找到: %v", err)
+	}
+	cmd = exec.Command(makePath, "-C", tempDir)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -297,7 +323,7 @@ func (r *RedHatInstaller) Install() error {
 
 	// 4. install
 	logger.Info("正在安装 proot...")
-	cmd = exec.Command("make", "-C", tempDir, "install")
+	cmd = exec.Command(makePath, "-C", tempDir, "install")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -314,14 +340,14 @@ type AlpineInstaller struct{}
 func NewAlpineInstaller() *AlpineInstaller { return &AlpineInstaller{} }
 func (a *AlpineInstaller) Name() string    { return "apk" }
 func (a *AlpineInstaller) CheckInstalled() (bool, bool) {
-	_, err1 := exec.LookPath("chroot")
-	_, err2 := exec.LookPath("proot")
+	_, err1 := termux.SafeLookPath("chroot")
+	_, err2 := termux.SafeLookPath("proot")
 	return err1 == nil, err2 == nil
 }
 func (a *AlpineInstaller) Install() error {
 	args := []string{"add", "--no-cache", "coreutils", "proot"}
 	if os.Geteuid() != 0 {
-		if sudo, err := exec.LookPath("sudo"); err == nil {
+		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			args = append([]string{sudo, "apk"}, args...)
 		} else {
 			return fmt.Errorf("需要 root 权限，请使用 sudo")
@@ -329,7 +355,10 @@ func (a *AlpineInstaller) Install() error {
 	} else {
 		args = append([]string{"apk"}, args...)
 	}
-	cmd := exec.Command(args[0], args[1:]...)
+	cmd, err := termux.CommandSlice(args)
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -341,14 +370,14 @@ type OpenSUSEInstaller struct{}
 func NewOpenSUSEInstaller() *OpenSUSEInstaller { return &OpenSUSEInstaller{} }
 func (s *OpenSUSEInstaller) Name() string     { return "zypper" }
 func (s *OpenSUSEInstaller) CheckInstalled() (bool, bool) {
-	_, err1 := exec.LookPath("chroot")
-	_, err2 := exec.LookPath("proot")
+	_, err1 := termux.SafeLookPath("chroot")
+	_, err2 := termux.SafeLookPath("proot")
 	return err1 == nil, err2 == nil
 }
 func (s *OpenSUSEInstaller) Install() error {
 	args := []string{"install", "-y", "coreutils", "proot"}
 	if os.Geteuid() != 0 {
-		if sudo, err := exec.LookPath("sudo"); err == nil {
+		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			args = append([]string{sudo, "zypper"}, args...)
 		} else {
 			return fmt.Errorf("需要 root 权限，请使用 sudo")
@@ -356,7 +385,10 @@ func (s *OpenSUSEInstaller) Install() error {
 	} else {
 		args = append([]string{"zypper"}, args...)
 	}
-	cmd := exec.Command(args[0], args[1:]...)
+	cmd, err := termux.CommandSlice(args)
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -368,8 +400,8 @@ type FreeBSDInstaller struct{}
 func NewFreeBSDInstaller() *FreeBSDInstaller { return &FreeBSDInstaller{} }
 func (f *FreeBSDInstaller) Name() string     { return "pkg (chroot 已自带)" }
 func (f *FreeBSDInstaller) CheckInstalled() (bool, bool) {
-	_, err1 := exec.LookPath("chroot")
-	_, err2 := exec.LookPath("proot")
+	_, err1 := termux.SafeLookPath("chroot")
+	_, err2 := termux.SafeLookPath("proot")
 	return err1 == nil, err2 == nil
 }
 func (f *FreeBSDInstaller) Install() error {
@@ -384,8 +416,8 @@ type NetBSDInstaller struct{}
 func NewNetBSDInstaller() *NetBSDInstaller { return &NetBSDInstaller{} }
 func (n *NetBSDInstaller) Name() string     { return "pkgin (chroot 已自带)" }
 func (n *NetBSDInstaller) CheckInstalled() (bool, bool) {
-	_, err1 := exec.LookPath("chroot")
-	_, err2 := exec.LookPath("proot")
+	_, err1 := termux.SafeLookPath("chroot")
+	_, err2 := termux.SafeLookPath("proot")
 	return err1 == nil, err2 == nil
 }
 func (n *NetBSDInstaller) Install() error {
