@@ -89,6 +89,11 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 	// 终极挂载参数 - 以 login shell 方式启动，自动 source /etc/profile
 	// 启动前打印彩色广告横幅
 	execCmd := "export PATH=/sbin:/usr/sbin:/bin:/usr/bin; export ENV=/etc/profile; printf '\\033[36m[Groot]\\033[0m \\033[32m如果你喜欢groot的话，请前往 https://gyscan.space 下载gyscan吧 [qwq]\\033[0m\\n'; exec " + shell + " -l"
+	// Alpine 默认使用 busybox 硬链接（多个目录项共享同一 inode）。
+	// 在 Termux/proot 环境下，文件系统可能不支持硬链接，
+	// 必须通过 --link2symlink 让 proot 把 link() 转换为 symlink()，
+	// 否则会出现 "command not found"（错误 127）。
+	// 参考：termux/proot#57, termux/proot#284, Alpine Linux 论坛
 	var args []string
 	args = []string{
 		"--kill-on-exit",
@@ -101,6 +106,10 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 		"-b", "/tmp",
 		"/bin/sh",
 		"-c", execCmd,
+	}
+	if termux.IsTermux() {
+		// Termux/proot 需要 --link2symlink 处理 Alpine 的 busybox 硬链接
+		args = append(args[:1], append([]string{"--link2symlink"}, args[1:]...)...)
 	}
 
 	logger.Info("执行完美 proot 命令：%s %v", prootPath, args)
@@ -146,6 +155,11 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 }
 
 func fixAlpineRootfs(rootfsPath string, uid, gid int) {
+	// Alpine 默认使用 busybox 硬链接：多个目录项（/bin/sh、/bin/cat、
+	// /bin/ls 等）共享同一 inode。filepath.Walk 会访问每个硬链接路径，
+	// 导致对同一 inode 重复执行 chmod/chown。此外，若某个硬链接位于
+	// 非可执行目录，错误的 0644 权限会覆盖整个 inode，使 busybox 失效。
+	processedInodes := make(map[uint64]bool)
 	filepath.Walk(rootfsPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -153,6 +167,16 @@ func fixAlpineRootfs(rootfsPath string, uid, gid int) {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
+
+		// 跳过已处理的 inode，避免对硬链接重复设置权限
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			inodeKey := uint64(stat.Ino)
+			if processedInodes[inodeKey] {
+				return nil
+			}
+			processedInodes[inodeKey] = true
+		}
+
 		os.Chown(path, uid, gid)
 		if info.IsDir() {
 			os.Chmod(path, 0755)
@@ -164,6 +188,7 @@ func fixAlpineRootfs(rootfsPath string, uid, gid int) {
 				isExec = strings.HasPrefix(relPath, "/bin/") ||
 					strings.HasPrefix(relPath, "/sbin/") ||
 					strings.HasPrefix(relPath, "/usr/bin/") ||
+					strings.HasPrefix(relPath, "/usr/sbin/") ||
 					strings.HasPrefix(relPath, "/lib/") ||
 					strings.HasPrefix(relPath, "/usr/lib/") ||
 					strings.HasPrefix(relPath, "/lib64/") ||

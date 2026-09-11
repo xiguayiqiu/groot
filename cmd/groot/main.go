@@ -9,9 +9,12 @@ import (
 	"strings"
 
 	"groot/internal/chroot"
+	"groot/internal/check"
 	"groot/internal/images"
 	"groot/internal/logger"
+	"groot/internal/lxc"
 	"groot/internal/mount"
+	"groot/internal/network"
 	"groot/internal/permission"
 	"groot/internal/proot"
 	"groot/internal/termux"
@@ -20,7 +23,7 @@ import (
 )
 
 const (
-	version = "0.3.1"
+	version = "0.3.2"
 )
 
 func detectDistro() string {
@@ -83,13 +86,33 @@ func main() {
 			}
 			customShell := ""
 			customUser := ""
+			netMode := ""
 			if len(os.Args) >= 4 {
 				customShell = os.Args[3]
 			}
 			if len(os.Args) >= 5 {
 				customUser = os.Args[4]
 			}
-			if err := chroot.ChildMain(os.Args[2], customShell, customUser); err != nil {
+			if len(os.Args) >= 6 {
+				netMode = os.Args[5]
+			}
+			if err := chroot.ChildMain(os.Args[2], customShell, customUser, netMode); err != nil {
+				fmt.Fprintf(os.Stderr, "错误: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "lxc-child":
+			if len(os.Args) < 4 {
+				fmt.Fprintf(os.Stderr, "错误: lxc-child 子命令需要 rootfs 和 shell 参数\n")
+				os.Exit(1)
+			}
+			rootfs := os.Args[2]
+			shell := os.Args[3]
+			containerName := ""
+			if len(os.Args) >= 5 {
+				containerName = os.Args[4]
+			}
+			if err := lxc.ChildMain(rootfs, shell, containerName); err != nil {
 				fmt.Fprintf(os.Stderr, "错误: %v\n", err)
 				os.Exit(1)
 			}
@@ -257,6 +280,137 @@ func main() {
 					},
 				},
 			},
+			{
+				Name:  "lxc",
+				Usage: "lxc 容器管理：创建和管理 LXC 容器",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "name",
+						Usage: "指定容器别名（创建容器时必需）",
+					},
+				},
+				Subcommands: []*cli.Command{
+					{
+						Name:  "ls",
+						Usage: "查看容器列表",
+						Action: func(cCtx *cli.Context) error {
+							return lxc.PrintContainerList(true)
+						},
+					},
+					{
+						Name:  "ps",
+						Usage: "查看容器内部进程",
+						Action: func(cCtx *cli.Context) error {
+							name := ""
+							if cCtx.NArg() > 0 {
+								name = cCtx.Args().First()
+							}
+							return lxc.PrintContainerPs(name)
+						},
+					},
+					{
+						Name:  "start",
+						Usage: "启动容器",
+						Action: func(cCtx *cli.Context) error {
+							if cCtx.NArg() < 1 {
+								return fmt.Errorf("请指定容器名称")
+							}
+							return lxc.StartContainer(cCtx.Args().First())
+						},
+					},
+					{
+						Name:  "stop",
+						Usage: "停止容器",
+						Action: func(cCtx *cli.Context) error {
+							if cCtx.NArg() < 1 {
+								return fmt.Errorf("请指定容器名称")
+							}
+							return lxc.StopContainer(cCtx.Args().First())
+						},
+					},
+					{
+						Name:  "rm",
+						Usage: "删除容器",
+						Action: func(cCtx *cli.Context) error {
+							if cCtx.NArg() < 1 {
+								return fmt.Errorf("请指定容器名称")
+							}
+							return lxc.DeleteContainer(cCtx.Args().First())
+						},
+					},
+				},
+				Action: func(cCtx *cli.Context) error {
+					if cCtx.NArg() < 1 {
+						cli.ShowSubcommandHelp(cCtx)
+						return nil
+					}
+
+					args := cCtx.Args()
+					firstArg := args.First()
+
+					// 检查是否是特殊子命令
+					switch firstArg {
+					case "ls":
+						return lxc.PrintContainerList(true)
+					case "ps":
+						name := ""
+						if args.Len() > 1 {
+							name = args.Get(1)
+						}
+						return lxc.PrintContainerPs(name)
+					}
+
+					// 手动扫描 -name/--name 参数（urfave/cli 在父命令+子命令混合模式下无法正确解析）
+					nameFlag := ""
+					positionalArgs := []string{}
+					for i := 0; i < args.Len(); i++ {
+						arg := args.Get(i)
+						if (arg == "-name" || arg == "--name") && i+1 < args.Len() {
+							nameFlag = args.Get(i + 1)
+							i++ // 跳过值
+						} else {
+							positionalArgs = append(positionalArgs, arg)
+						}
+					}
+
+					// 检查是否是创建命令: lxc [rootfs] [shell] -name [别名]
+					if nameFlag != "" {
+						// 创建容器模式
+						if len(positionalArgs) < 1 {
+							return fmt.Errorf("请指定 rootfs 路径")
+						}
+						rootfs := positionalArgs[0]
+						shell := "/bin/sh"
+						if len(positionalArgs) > 1 {
+							shell = positionalArgs[1]
+						}
+						return lxc.CreateContainer(rootfs, shell, nameFlag)
+					}
+
+					// 检查操作: lxc [别名] start/stop
+					if len(positionalArgs) >= 2 {
+						action := positionalArgs[1]
+						containerName := positionalArgs[0]
+						switch action {
+						case "start":
+							return lxc.StartContainer(containerName)
+						case "stop":
+							return lxc.StopContainer(containerName)
+						case "rm":
+							return lxc.DeleteContainer(containerName)
+						case "ls":
+							return lxc.PrintContainerPs(containerName)
+						case "ps":
+							return lxc.PrintContainerPs(containerName)
+						default:
+							return fmt.Errorf("未知操作: %s，支持: start, stop, rm, ls, ps", action)
+						}
+					}
+
+					// 登录容器: lxc [别名]
+					return lxc.LoginContainer(positionalArgs[0], "")
+				},
+			},
 		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -299,6 +453,15 @@ func main() {
 				Aliases: []string{"download"},
 				Usage:   "打开浏览器选择并下载 rootfs 镜像",
 			},
+			&cli.BoolFlag{
+				Name:  "check",
+				Usage: "检查设备是否符合要求（可加 proot/chroot 参数指定检查类型）",
+			},
+			&cli.BoolFlag{
+				Name:    "net",
+				Aliases: []string{"network"},
+				Usage:   "为 chroot 创建独立网络命名空间（仅 chroot 模式有效）",
+			},
 		},
 		Before: func(cCtx *cli.Context) error {
 			if cCtx.Bool("debug") {
@@ -318,6 +481,23 @@ func main() {
 				return nil
 			}
 
+			if cCtx.Bool("check") {
+				args := cCtx.Args()
+				mode := check.ModeAll
+
+				if args.Len() > 0 {
+					switch args.First() {
+					case "proot", "p":
+						mode = check.ModeProot
+					case "chroot", "c":
+						mode = check.ModeChroot
+					}
+				}
+
+				check.RunCheck(mode)
+				return nil
+			}
+
 			chrootPath := cCtx.String("c")
 			prootPath := cCtx.String("p")
 			prootDistro := cCtx.String("z")
@@ -325,7 +505,18 @@ func main() {
 			customShell := cCtx.String("b")
 			listDistros := cCtx.Bool("l")
 			download := cCtx.Bool("d")
+			netMode := cCtx.Bool("net")
 			args := cCtx.Args()
+
+			// 检查位置参数中是否包含 -net/--net/--network
+			if !netMode {
+				for _, arg := range args.Slice() {
+					if arg == "-net" || arg == "--net" || arg == "--network" {
+						netMode = true
+						break
+					}
+				}
+			}
 
 			// -d/--download 模式：TUI 选择发行版并打开浏览器
 			if download {
@@ -333,8 +524,14 @@ func main() {
 			}
 
 			// -c 和 -p 模式下，第一个位置参数（若 -b 未指定）作为自定义 shell
+			// 同时过滤掉 -net/--net/--network 参数
 			if customShell == "" && (chrootPath != "" || prootPath != "") && args.Len() > 0 {
-				customShell = args.First()
+				for _, arg := range args.Slice() {
+					if arg != "-net" && arg != "--net" && arg != "--network" {
+						customShell = arg
+						break
+					}
+				}
 			}
 
 			if cCtx.NArg() > 0 {
@@ -507,7 +704,7 @@ func main() {
 			}
 
 			if chrootPath != "" {
-				return runChroot(chrootPath, customShell)
+				return runChroot(chrootPath, customShell, netMode)
 			}
 
 			if prootDistro != "" {
@@ -545,13 +742,21 @@ func main() {
 	}
 }
 
-func runChroot(rootfsPath string, customShell string) error {
+func runChroot(rootfsPath string, customShell string, netMode bool) error {
 	if !permission.IsRoot() {
 		// 在 Termux 环境下给出更友好的提示
 		if termux.IsTermux() {
 			return fmt.Errorf("当前设备没有 root 权限，仅支持 proot 模式（请使用 -p 参数）")
 		}
 		return fmt.Errorf("-c 参数（chroot）必须以 root 身份运行，请使用 sudo 或切换到 root 用户")
+	}
+
+	// 检查 -net 参数是否与 -c 一起使用
+	if netMode {
+		supported, msg := network.CheckNetworkSupport()
+		if !supported {
+			return fmt.Errorf("网络命名空间不支持: %s", msg)
+		}
 	}
 
 	// 自动安装 chroot（Termux 中）
@@ -563,7 +768,7 @@ func runChroot(rootfsPath string, customShell string) error {
 	if termux.IsTermux() {
 		termux.CleanupEnv()
 	}
-	return chroot.Run(rootfsPath, customShell)
+	return chroot.Run(rootfsPath, customShell, netMode)
 }
 
 func runProot(rootfsPath string, customShell string) error {

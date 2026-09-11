@@ -142,6 +142,10 @@ func Run(rootfsPath string, customShell string) error {
 
 // fixUltimatePermissions 终极修复整个 rootfs 权限
 func fixUltimatePermissions(rootfsPath string, uid, gid int) {
+	// Alpine 等发行版使用 busybox 硬链接，多个目录项共享同一 inode。
+	// 跳过已处理的 inode 可避免重复 chmod/chown，
+	// 以及因路径判定误差导致的权限覆盖问题。
+	processedInodes := make(map[uint64]bool)
 	filepath.Walk(rootfsPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -149,6 +153,14 @@ func fixUltimatePermissions(rootfsPath string, uid, gid int) {
 		// 不修改符号链接
 		if info.Mode()&os.ModeSymlink != 0 {
 			return nil
+		}
+		// 跳过已处理的 inode，避免对硬链接重复设置权限
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			inodeKey := uint64(stat.Ino)
+			if processedInodes[inodeKey] {
+				return nil
+			}
+			processedInodes[inodeKey] = true
 		}
 		// 设置所有者为当前用户
 		os.Chown(path, uid, gid)

@@ -8,17 +8,19 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"groot/internal/cleanup"
 	"groot/internal/env"
 	"groot/internal/logger"
 	"groot/internal/mount"
+	"groot/internal/network"
 	"groot/internal/permission"
 	"groot/internal/usercheck"
 )
 
 // Run 运行 chroot 模式
-func Run(rootfsPath string, customShell string) error {
+func Run(rootfsPath string, customShell string, netMode bool) error {
 	// 转换为绝对路径
 	absRootfsPath, err := filepath.Abs(rootfsPath)
 	if err != nil {
@@ -81,6 +83,11 @@ func Run(rootfsPath string, customShell string) error {
 	} else {
 		args = append(args, "")
 	}
+	if netMode {
+		args = append(args, "net")
+	} else {
+		args = append(args, "")
+	}
 
 	// 创建子进程
 	cmd := exec.Command(args[0], args[1:]...)
@@ -92,6 +99,9 @@ func Run(rootfsPath string, customShell string) error {
 	var cloneFlags uintptr = syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWUTS | syscall.CLONE_NEWIPC
 	if !isRoot {
 		cloneFlags |= syscall.CLONE_NEWUSER
+	}
+	if netMode {
+		cloneFlags |= syscall.CLONE_NEWNET
 	}
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -118,6 +128,20 @@ func Run(rootfsPath string, customShell string) error {
 		return fmt.Errorf("启动子进程失败: %w", err)
 	}
 
+	// 如果启用了网络模式，在子进程的网络命名空间中配置网络
+	if netMode {
+		// 等待子进程创建网络命名空间
+		time.Sleep(100 * time.Millisecond)
+
+		if err := network.SetupNetworkInChildNs(cmd.Process.Pid); err != nil {
+			logger.Warn("设置网络命名空间失败: %v", err)
+		} else {
+			// 设置 DNS
+			_ = network.SetupChildDns(absRootfsPath)
+			logger.Info("网络命名空间配置完成")
+		}
+	}
+
 	// 后台转发信号
 	go func() {
 		for sig := range sigChan {
@@ -129,10 +153,19 @@ func Run(rootfsPath string, customShell string) error {
 	}()
 
 	if err := cmd.Wait(); err != nil {
+		// 清理网络资源
+		if netMode {
+			network.CleanupNetworkOnHost()
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
 		return fmt.Errorf("子进程执行失败: %w", err)
+	}
+
+	// 清理网络资源
+	if netMode {
+		network.CleanupNetworkOnHost()
 	}
 
 	signal.Stop(sigChan)
@@ -142,7 +175,7 @@ func Run(rootfsPath string, customShell string) error {
 }
 
 // ChildMain chroot 子进程入口
-func ChildMain(rootfsPath string, customShell string, customUser string) error {
+func ChildMain(rootfsPath string, customShell string, customUser string, netMode string) error {
 	logger.Info("进入 chroot 子进程")
 
 	// 首先设置主机名（在 UTS namespace 中）
@@ -258,6 +291,14 @@ func ChildMain(rootfsPath string, customShell string, customUser string) error {
 	fakeSystemd := `#!/bin/bash
 exit 0`
 	os.WriteFile("/usr/bin/systemd-run", []byte(fakeSystemd), 0755)
+
+	// 如果启用了网络模式，在子进程中设置 DNS
+	if netMode == "net" {
+		logger.Info("正在设置网络 DNS...")
+		if err := network.SetupChildDns(rootfsPath); err != nil {
+			logger.Warn("设置 DNS 失败: %v", err)
+		}
+	}
 
 	// 检查是否是 Arch Linux 并修复 pacman 问题
 	if _, err := os.Stat("/etc/arch-release"); err == nil {

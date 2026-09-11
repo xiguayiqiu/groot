@@ -1,0 +1,8 @@
+TX3@yiqiu[~/projects/groot][11:27:22]  git:master*
+> sudo ./groot lxc alpine start
+TX3@yiqiu[~/projects/groot][11:27:33]  git:master*
+> sudo ./groot lxc alpine
+[sudo] yiqiu 的密码：
+错误: 容器 'alpine' 进程已退出，请重新启动
+
+/home/yiqiu/.oh-my-zsh/lib/theme-and-appearance.zsh:source:36: 没有那个文件或目录: /proc/self/fd/14
