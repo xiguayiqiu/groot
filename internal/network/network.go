@@ -171,6 +171,63 @@ func CleanupNetworkOnHost() {
 	logger.Info("主机端网络清理完成")
 }
 
+// CleanupContainerResources 清理容器使用的所有网络资源。
+// 包括：
+//  1. 主机端 veth-host 接口和 iptables 规则
+//  2. 尝试清理容器网络命名空间中的 veth-guest（若容器已终止）
+//  3. 禁用 IP 转发（如果之前启用过）
+func CleanupContainerResources(pid int, rootfs string) {
+	logger.Info("清理容器 %d 的网络资源...", pid)
+
+	// 1. 清理主机端资源
+	CleanupNetworkOnHost()
+
+	// 2. 尝试清理容器网络命名空间中的 veth-guest
+	//    如果容器进程已终止，veth-guest 可能仍残留在其网络命名空间中。
+	//    尝试通过 nsenter 删除，或者依赖内核在网络命名空间销毁时自动清理。
+	if pid > 0 {
+		// 检查容器进程是否仍存在
+		if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); os.IsNotExist(err) {
+			// 容器已终止，尝试清理其网络命名空间中的残留接口
+			// 注意：如果网络命名空间已被销毁，这条命令会失败，但不会影响
+			cmdStr := fmt.Sprintf(
+				"nsenter -t %d -n -- ip link del veth-guest 2>/dev/null || true", pid,
+			)
+			exec.Command("/bin/sh", "-c", cmdStr).Run()
+		}
+	}
+
+	// 3. 禁用 IP 转发（除非系统需要它）
+	// 注意：这可能会影响其他容器或系统功能，因此仅在确定没有其他使用时才执行
+	// 此处不自动禁用，以免影响其他容器
+
+	logger.Info("容器 %d 的网络资源清理完成", pid)
+}
+
+// EnsureNoOrphanedNetwork 检测并清理可能残留的孤立网络资源。
+// 用于启动容器前或系统启动时，清理上次异常退 possible 留下的残留。
+func EnsureNoOrphanedNetwork() {
+	logger.Debug("检测孤立网络资源...")
+
+	// 检测 veth-host 是否存在但无对应容器
+	// 尝试删除 veth-host（如果存在）
+	cmd := exec.Command("/bin/sh", "-c", "ip link delete veth-host 2>/dev/null || true")
+	cmd.Run()
+
+	// 检测是否有残留的 iptables 规则
+	iptablesCmds := []string{
+		"iptables -t nat -D POSTROUTING -s 10.0.0.0/24 -j MASQUERADE 2>/dev/null || true",
+		"iptables -D FORWARD -i veth-host -o veth-host -j ACCEPT 2>/dev/null || true",
+		"iptables -D FORWARD -i veth-host -j ACCEPT 2>/dev/null || true",
+		"iptables -D FORWARD -o veth-host -j ACCEPT 2>/dev/null || true",
+	}
+	for _, cmdStr := range iptablesCmds {
+		exec.Command("/bin/sh", "-c", cmdStr).Run()
+	}
+
+	logger.Debug("孤立网络资源清理完成")
+}
+
 func GetHostIP() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {

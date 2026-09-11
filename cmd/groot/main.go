@@ -12,7 +12,6 @@ import (
 	"groot/internal/check"
 	"groot/internal/images"
 	"groot/internal/logger"
-	"groot/internal/lxc"
 	"groot/internal/mount"
 	"groot/internal/network"
 	"groot/internal/permission"
@@ -101,22 +100,7 @@ func main() {
 				os.Exit(1)
 			}
 			return
-		case "lxc-child":
-			if len(os.Args) < 4 {
-				fmt.Fprintf(os.Stderr, "错误: lxc-child 子命令需要 rootfs 和 shell 参数\n")
-				os.Exit(1)
-			}
-			rootfs := os.Args[2]
-			shell := os.Args[3]
-			containerName := ""
-			if len(os.Args) >= 5 {
-				containerName = os.Args[4]
-			}
-			if err := lxc.ChildMain(rootfs, shell, containerName); err != nil {
-				fmt.Fprintf(os.Stderr, "错误: %v\n", err)
-				os.Exit(1)
-			}
-			return
+
 		case "-v", "--version":
 			fmt.Printf("groot version %s\n", version)
 			fmt.Println("作者：弈秋忘忧白帽")
@@ -278,137 +262,6 @@ func main() {
 							return images.MakeRootfs(config)
 						},
 					},
-				},
-			},
-			{
-				Name:  "lxc",
-				Usage: "lxc 容器管理：创建和管理 LXC 容器",
-				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:  "name",
-						Usage: "指定容器别名（创建容器时必需）",
-					},
-				},
-				Subcommands: []*cli.Command{
-					{
-						Name:  "ls",
-						Usage: "查看容器列表",
-						Action: func(cCtx *cli.Context) error {
-							return lxc.PrintContainerList(true)
-						},
-					},
-					{
-						Name:  "ps",
-						Usage: "查看容器内部进程",
-						Action: func(cCtx *cli.Context) error {
-							name := ""
-							if cCtx.NArg() > 0 {
-								name = cCtx.Args().First()
-							}
-							return lxc.PrintContainerPs(name)
-						},
-					},
-					{
-						Name:  "start",
-						Usage: "启动容器",
-						Action: func(cCtx *cli.Context) error {
-							if cCtx.NArg() < 1 {
-								return fmt.Errorf("请指定容器名称")
-							}
-							return lxc.StartContainer(cCtx.Args().First())
-						},
-					},
-					{
-						Name:  "stop",
-						Usage: "停止容器",
-						Action: func(cCtx *cli.Context) error {
-							if cCtx.NArg() < 1 {
-								return fmt.Errorf("请指定容器名称")
-							}
-							return lxc.StopContainer(cCtx.Args().First())
-						},
-					},
-					{
-						Name:  "rm",
-						Usage: "删除容器",
-						Action: func(cCtx *cli.Context) error {
-							if cCtx.NArg() < 1 {
-								return fmt.Errorf("请指定容器名称")
-							}
-							return lxc.DeleteContainer(cCtx.Args().First())
-						},
-					},
-				},
-				Action: func(cCtx *cli.Context) error {
-					if cCtx.NArg() < 1 {
-						cli.ShowSubcommandHelp(cCtx)
-						return nil
-					}
-
-					args := cCtx.Args()
-					firstArg := args.First()
-
-					// 检查是否是特殊子命令
-					switch firstArg {
-					case "ls":
-						return lxc.PrintContainerList(true)
-					case "ps":
-						name := ""
-						if args.Len() > 1 {
-							name = args.Get(1)
-						}
-						return lxc.PrintContainerPs(name)
-					}
-
-					// 手动扫描 -name/--name 参数（urfave/cli 在父命令+子命令混合模式下无法正确解析）
-					nameFlag := ""
-					positionalArgs := []string{}
-					for i := 0; i < args.Len(); i++ {
-						arg := args.Get(i)
-						if (arg == "-name" || arg == "--name") && i+1 < args.Len() {
-							nameFlag = args.Get(i + 1)
-							i++ // 跳过值
-						} else {
-							positionalArgs = append(positionalArgs, arg)
-						}
-					}
-
-					// 检查是否是创建命令: lxc [rootfs] [shell] -name [别名]
-					if nameFlag != "" {
-						// 创建容器模式
-						if len(positionalArgs) < 1 {
-							return fmt.Errorf("请指定 rootfs 路径")
-						}
-						rootfs := positionalArgs[0]
-						shell := "/bin/sh"
-						if len(positionalArgs) > 1 {
-							shell = positionalArgs[1]
-						}
-						return lxc.CreateContainer(rootfs, shell, nameFlag)
-					}
-
-					// 检查操作: lxc [别名] start/stop
-					if len(positionalArgs) >= 2 {
-						action := positionalArgs[1]
-						containerName := positionalArgs[0]
-						switch action {
-						case "start":
-							return lxc.StartContainer(containerName)
-						case "stop":
-							return lxc.StopContainer(containerName)
-						case "rm":
-							return lxc.DeleteContainer(containerName)
-						case "ls":
-							return lxc.PrintContainerPs(containerName)
-						case "ps":
-							return lxc.PrintContainerPs(containerName)
-						default:
-							return fmt.Errorf("未知操作: %s，支持: start, stop, rm, ls, ps", action)
-						}
-					}
-
-					// 登录容器: lxc [别名]
-					return lxc.LoginContainer(positionalArgs[0], "")
 				},
 			},
 		},

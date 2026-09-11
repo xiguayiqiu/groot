@@ -157,10 +157,13 @@ func Run(rootfsPath string, customShell string, netMode bool) error {
 		if netMode {
 			network.CleanupNetworkOnHost()
 		}
+		// 不立即退出groot，而是返回错误让上层处理
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+			// 返回nil而不是os.Exit，让groot继续运行
+			logger.Info("子进程退出，退出码: %d", exitErr.ExitCode())
+		} else {
+			logger.Warn("子进程执行失败: %v", err)
 		}
-		return fmt.Errorf("子进程执行失败: %w", err)
 	}
 
 	// 清理网络资源
@@ -226,6 +229,9 @@ func ChildMain(rootfsPath string, customShell string, customUser string, netMode
 	}
 	logger.Info("虚拟文件系统挂载成功: %v", mounted)
 
+	// 创建必要的设备节点（在chroot之前，确保/dev中有基本设备）
+	createDevices(rootfsPath)
+
 	defer func() {
 		// 恢复到原根目录
 		logger.Debug("恢复到原根目录...")
@@ -254,6 +260,25 @@ func ChildMain(rootfsPath string, customShell string, customUser string, netMode
 	if err := syscall.Chdir("/"); err != nil {
 		return fmt.Errorf("chdir 失败: %w", err)
 	}
+
+	// 挂载 devpts 文件系统（必须在chroot之后，shell启动之前）
+	if err := syscall.Mount("devpts", "/dev/pts", "devpts", syscall.MS_NOEXEC|syscall.MS_NOSUID, ""); err != nil {
+		logger.Warn("挂载 devpts 失败: %v", err)
+	}
+
+	// 确保 /dev/pts/ptmx 设备存在
+	if _, err := os.Stat("/dev/pts/ptmx"); os.IsNotExist(err) {
+		devNum := (5 << 8) | 2
+		syscall.Mknod("/dev/pts/ptmx", syscall.S_IFCHR|0666, int(devNum))
+	}
+
+	// 确保 /dev/ptmx 存在（符号链接或设备）
+	if _, err := os.Lstat("/dev/ptmx"); os.IsNotExist(err) {
+		os.Symlink("/dev/pts/ptmx", "/dev/ptmx")
+	}
+
+	// 修复rootfs中的符号链接
+	fixSymLinks(rootfsPath)
 
 	// 设置环境变量
 	os.Clearenv()
@@ -420,7 +445,6 @@ exec /usr/bin/pacman "$@"
 		"(cp /var/lib/dpkg/info/libc6:amd64.postinst /var/lib/dpkg/info/libc6:amd64.postinst.bak 2>/dev/null; " +
 		"echo '#!/bin/bash'; echo 'exit 0' > /var/lib/dpkg/info/libc6:amd64.postinst; " +
 		"chmod +x /var/lib/dpkg/info/libc6:amd64.postinst); fi"
-	var cmd *exec.Cmd
 
 	// 为 Arch Linux 添加 /dev/shm 到 PATH
 	if pacmanWrapper != "" {
@@ -435,7 +459,41 @@ exec /usr/bin/pacman "$@"
 	// 以 login shell 方式启动，自动 source /etc/profile（覆盖 PS1、PATH 等）
 	// 启动前打印彩色广告横幅
 	bannerCmd := "printf '\\033[36m[Groot]\\033[0m \\033[32m如果你喜欢groot的话，请前往 https://gyscan.space 下载gyscan吧 [qwq]\\033[0m\\n'; "
-	cmd = exec.Command("/bin/sh", "-c", fixScript+pacmanWrapper+"; export PATH=/dev/shm:/sbin:/usr/sbin:/bin:/usr/bin; export ENV=/etc/profile; "+bannerCmd+"SHELL="+shell+" exec "+shell+" -l")
+
+	// 在shell启动前执行修复脚本
+	fixCmdStr := fixScript + pacmanWrapper
+
+	// 检查是否有 script 命令（用于提供伪终端支持）
+	hasScript := false
+	if _, err := os.Stat("/usr/bin/script"); err == nil {
+		hasScript = true
+	} else if _, err := os.Stat("/bin/script"); err == nil {
+		hasScript = true
+	}
+
+	// 检查是否有 cttyhack 命令（Alpine特有）
+	hasCttyhack := false
+	if _, err := os.Stat("/usr/bin/cttyhack"); err == nil {
+		hasCttyhack = true
+	} else if _, err := os.Stat("/bin/cttyhack"); err == nil {
+		hasCttyhack = true
+	}
+
+	var cmd *exec.Cmd
+	if hasScript {
+		// 使用 script 命令提供伪终端支持
+		cmd = exec.Command("/usr/bin/script", "-qc", fixCmdStr+"; "+bannerCmd+" SHELL="+shell+" exec "+shell+" -l", "/dev/null")
+	} else if hasCttyhack {
+		// 使用 cttyhack（Alpine特有）提供tty支持
+		cmd = exec.Command("/usr/bin/cttyhack", shell, "-c", fixCmdStr+"; "+bannerCmd+" SHELL="+shell+" exec "+shell+" -l")
+	} else {
+		// 直接执行目标shell，不使用 /bin/sh -c
+		// 先执行修复脚本，然后启动shell
+		// 使用 SHELL=$shell exec $shell -l 确保SHELL环境变量正确
+		startupCmd := fixCmdStr + "; " + bannerCmd + " SHELL=" + shell + " exec " + shell + " -l"
+		cmd = exec.Command("/bin/sh", "-c", startupCmd)
+	}
+
 	cmd.Env = newEnv
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -447,48 +505,204 @@ exec /usr/bin/pacman "$@"
 	}
 
 	if err := cmd.Wait(); err != nil {
+		// 不立即退出groot，而是检查退出原因
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+			// 如果是信号导致的退出（如Ctrl+C），不退出groot
+			logger.Info("shell退出，退出码: %d", exitErr.ExitCode())
+		} else {
+			logger.Warn("shell运行失败: %v", err)
 		}
-		return fmt.Errorf("shell 运行失败: %w", err)
 	}
 
 	return nil
 }
 
-// findShell 查找可用的 shell 解释器
+// findShell 查找可用的 shell 解释器（在rootfs中查找）
 func findShell(rootfsPath, customShell, defaultShell string) string {
 	// 优先检查用户指定的 shell
 	if customShell != "" {
 		shellPath := customShell
+		// 如果是相对路径，添加 / 前缀
 		if customShell[0] != '/' {
 			shellPath = "/" + customShell
 		}
-		if _, err := os.Stat(shellPath); err == nil {
+		// 在rootfs中检查绝对路径
+		if _, err := os.Stat(rootfsPath + shellPath); err == nil {
 			return shellPath
 		}
-		// 尝试常见的 shell 路径
-		for _, path := range []string{"/bin/" + customShell, "/usr/bin/" + customShell} {
-			if _, err := os.Stat(path); err == nil {
-				return path
+		// 如果是相对路径，尝试常见的 shell 路径
+		if customShell[0] != '/' {
+			for _, path := range []string{"/bin/" + customShell, "/usr/bin/" + customShell} {
+				if _, err := os.Stat(rootfsPath + path); err == nil {
+					return path
+				}
 			}
 		}
 	}
 
 	// 使用用户默认 shell
 	if defaultShell != "" && defaultShell != "/usr/bin/nologin" {
-		if _, err := os.Stat(defaultShell); err == nil {
+		if _, err := os.Stat(rootfsPath + defaultShell); err == nil {
 			return defaultShell
 		}
 	}
 
-	// 按优先级查找可用的 shell
-	shells := []string{"/bin/dash", "/bin/bash", "/bin/sh", "/usr/bin/bash", "/usr/bin/sh"}
+	// 按优先级查找可用的 shell（在rootfs中查找）
+	// 优先查找轻量级shell（ash/dash/sh），然后是bash
+	shells := []string{"/bin/ash", "/bin/dash", "/bin/sh", "/usr/bin/bash", "/usr/bin/sh", "/bin/bash"}
 	for _, s := range shells {
-		if _, err := os.Stat(s); err == nil {
+		if _, err := os.Stat(rootfsPath + s); err == nil {
 			return s
 		}
 	}
 
 	return "/bin/sh"
+}
+
+// createDevices 在 rootfs 中创建必要的设备节点，确保终端和系统功能正常
+func createDevices(rootfsPath string) {
+	devPath := rootfsPath + "/dev"
+
+	// 确保 /dev 目录存在
+	os.MkdirAll(devPath, 0755)
+
+	// 定义需要创建的设备节点
+	devices := []struct {
+		path  string
+		major uint32
+		minor uint32
+		mode  uint32
+	}{
+		// 标准字符设备
+		{"null", 1, 3, 0666},    // /dev/null - 空设备
+		{"zero", 1, 5, 0666},    // /dev/zero - 零设备
+		{"random", 1, 8, 0666},   // /dev/random - 随机数设备
+		{"urandom", 1, 9, 0666},  // /dev/urandom - 非阻塞随机数设备
+		{"full", 1, 7, 0666},     // /dev/full - 满设备
+		{"tty", 5, 0, 0666},      // /dev/tty - 当前终端
+		{"console", 5, 1, 0600},  // /dev/console - 系统控制台
+	}
+
+	for _, dev := range devices {
+		path := devPath + "/" + dev.path
+		// 检查设备是否已存在（可能通过bind mount从宿主机继承）
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			// 创建设备节点，使用 mknod 系统调用
+			// 设备号 = (major << 8) | minor
+			devNum := (dev.major << 8) | dev.minor
+			if err := syscall.Mknod(path, syscall.S_IFCHR|dev.mode, int(devNum)); err != nil {
+				logger.Debug("创建设备节点 %s 失败: %v", path, err)
+			}
+		}
+	}
+
+	// 创建 /dev/pts 目录（用于伪终端）
+	ptsPath := devPath + "/pts"
+	os.MkdirAll(ptsPath, 0755)
+
+	// 创建 /dev/ptmx 设备（伪终端多路复用器）
+	ptmxPath := devPath + "/ptmx"
+	if _, err := os.Stat(ptmxPath); os.IsNotExist(err) {
+		// ptmx: major 5, minor 2
+		devNum := (5 << 8) | 2
+		if err := syscall.Mknod(ptmxPath, syscall.S_IFCHR|0666, int(devNum)); err != nil {
+			// 如果创建失败，尝试创建符号链接到 /dev/pts/ptmx
+			os.Symlink("/dev/pts/ptmx", ptmxPath)
+		}
+	}
+
+	// 创建 /dev/shm 目录（共享内存）
+	shmPath := devPath + "/shm"
+	os.MkdirAll(shmPath, 1777)
+
+	// 创建 /dev/fd 符号链接（文件描述符）
+	fdPath := devPath + "/fd"
+	if _, err := os.Lstat(fdPath); os.IsNotExist(err) {
+		os.Symlink("/proc/self/fd", fdPath)
+	}
+
+	// 创建 /dev/stdin, /dev/stdout, /dev/stderr 符号链接
+	stdPaths := map[string]string{
+		"stdin":  "/proc/self/fd/0",
+		"stdout": "/proc/self/fd/1",
+		"stderr": "/proc/self/fd/2",
+	}
+	for name, target := range stdPaths {
+		path := devPath + "/" + name
+		if _, err := os.Lstat(path); os.IsNotExist(err) {
+			os.Symlink(target, path)
+		}
+	}
+
+	// 创建 /dev/core 符号链接
+	corePath := devPath + "/core"
+	if _, err := os.Lstat(corePath); os.IsNotExist(err) {
+		os.Symlink("/proc/kcore", corePath)
+	}
+
+	// 创建 /dev/pts/ptmx 设备（如果不存在）
+	ptsPtmxPath := ptsPath + "/ptmx"
+	if _, err := os.Stat(ptsPtmxPath); os.IsNotExist(err) {
+		devNum := (5 << 8) | 2
+		syscall.Mknod(ptsPtmxPath, syscall.S_IFCHR|0666, int(devNum))
+	}
+
+	logger.Debug("设备节点创建完成")
+}
+
+// fixSymLinks 修复rootfs中的符号链接
+// 在chroot环境中，符号链接可能指向宿主机的路径，需要修复
+func fixSymLinks(rootfsPath string) {
+	// 常见的需要修复的链接路径
+	commonLinks := []struct {
+		linkPath string // 链接路径
+		targets  []string // 可能的目标文件
+	}{
+		{"/usr/bin/lua", []string{"/usr/bin/lua5.4", "/usr/bin/lua5.3", "/usr/bin/lua5.1", "/usr/bin/luajit"}},
+		{"/usr/bin/python", []string{"/usr/bin/python3", "/usr/bin/python3.11", "/usr/bin/python3.10"}},
+		{"/usr/bin/python3", []string{"/usr/bin/python3.11", "/usr/bin/python3.10", "/usr/bin/python3.9"}},
+		{"/bin/sh", []string{"/bin/bash", "/bin/dash", "/bin/ash"}},
+		{"/bin/ash", []string{"/bin/busybox"}},
+		{"/bin/dash", []string{"/bin/busybox"}},
+		{"/usr/bin/cls", []string{"/usr/bin/clear", "/usr/sbin/clear", "/bin/clear"}},
+		{"/usr/bin/clear", []string{"/usr/bin/clear", "/usr/sbin/clear", "/bin/clear"}},
+		{"/usr/bin/python2", []string{"/usr/bin/python2.7"}},
+		{"/usr/bin/perl", []string{"/usr/bin/perl5.38", "/usr/bin/perl5.36"}},
+		{"/usr/bin/pwd", []string{"/bin/pwd", "/usr/bin/pwd"}},
+		{"/usr/bin/vi", []string{"/usr/bin/vim", "/usr/bin/nvim", "/bin/vi"}},
+		{"/usr/bin/vim", []string{"/usr/bin/vim", "/usr/bin/nvim", "/bin/vi"}},
+	}
+
+	for _, link := range commonLinks {
+		// 检查链接是否存在且是符号链接
+		linkInfo, err := os.Lstat(link.linkPath)
+		if err != nil {
+			continue // 链接不存在，跳过
+		}
+		if linkInfo.Mode()&os.ModeSymlink == 0 {
+			continue // 不是符号链接，跳过
+		}
+
+		// 检查链接目标是否存在
+		target, err := os.Readlink(link.linkPath)
+		if err != nil {
+			continue
+		}
+
+		// 如果目标是绝对路径，检查目标是否存在
+		if target[0] == '/' {
+			if _, err := os.Stat(target); os.IsNotExist(err) {
+				// 目标不存在，尝试找到正确的目标
+				for _, altTarget := range link.targets {
+					if _, err := os.Stat(altTarget); err == nil {
+						// 找到存在的目标，修复链接
+						os.Remove(link.linkPath)
+						os.Symlink(altTarget, link.linkPath)
+						logger.Debug("修复符号链接: %s -> %s", link.linkPath, altTarget)
+						break
+					}
+				}
+			}
+		}
+	}
 }
