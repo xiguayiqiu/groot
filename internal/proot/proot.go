@@ -11,6 +11,7 @@ import (
 
 	"groot/internal/cleanup"
 	"groot/internal/env"
+	"groot/internal/i18n"
 	"groot/internal/logger"
 	"groot/internal/termux"
 	"groot/internal/usercheck"
@@ -18,14 +19,14 @@ import (
 
 // Run 运行 proot 模式 - 只使用系统的 proot 命令
 func Run(rootfsPath string, customShell string) error {
-	logger.Info("开始 proot 模式，rootfs 路径: %s", rootfsPath)
+	logger.Info(i18n.Tf("proot.start", rootfsPath))
 
 	// 首先查找系统的 proot 命令（使用安全的 LookPath，避免 Termux 中 SIGSYS 崩溃）
 	prootPath, err := termux.SafeLookPath("proot")
 	if err != nil {
-		return fmt.Errorf("系统未安装 proot，请先安装：sudo apt install proot")
+		return fmt.Errorf("%s", i18n.T("proot.not_installed"))
 	}
-	logger.Debug("找到系统 proot: %s", prootPath)
+	logger.Debug(i18n.Tf("proot.found", prootPath))
 
 	// 转换为绝对路径
 	absRootfsPath := rootfsPath
@@ -39,13 +40,13 @@ func Run(rootfsPath string, customShell string) error {
 
 	// 最简单的验证：检查 rootfs 是否存在
 	if _, err := os.Stat(absRootfsPath); os.IsNotExist(err) {
-		return fmt.Errorf("rootfs 不存在: %s", absRootfsPath)
+		return fmt.Errorf("%s", i18n.Tf("proot.rootfs_not_exist", absRootfsPath))
 	}
 
 	// 从 rootfs 的 /etc/passwd 中读取用户信息（包括 shell）
 	userInfo, err := usercheck.CheckUser(absRootfsPath, "root")
 	if err != nil {
-		logger.Warn("无法读取 passwd 文件，使用默认用户信息: %v", err)
+		logger.Warn(i18n.Tf("proot.passwd_fail", err))
 		userInfo = &usercheck.UserInfo{
 			Username: "root",
 			Uid:      0,
@@ -76,6 +77,8 @@ func Run(rootfsPath string, customShell string) error {
 
 	// 构建 proot 命令参数 - 以 login shell 方式启动，自动 source /etc/profile
 	// 启动前打印彩色广告横幅
+	// 设置 ENV=/etc/profile 让 bash 在非登录模式下也读取 profile
+	// 使用 -l 参数让 bash 作为 login shell 启动，读取 /etc/profile, ~/.bash_profile, ~/.profile
 	execCmd := "export ENV=/etc/profile; printf '\\033[36m[Groot]\\033[0m \\033[32m如果你喜欢groot的话，请前往 https://gyscan.space 下载gyscan吧 [qwq]\\033[0m\\n'; exec " + shell + " -l"
 	var args []string
 	args = []string{
@@ -91,7 +94,7 @@ func Run(rootfsPath string, customShell string) error {
 		"-c", execCmd,
 	}
 
-	logger.Info("执行 proot 命令: %s %v", prootPath, args)
+	logger.Info(i18n.Tf("proot.exec_cmd", prootPath, args))
 
 	cmd := exec.Command(prootPath, args...)
 	cmd.Stdin = os.Stdin
@@ -115,7 +118,7 @@ func Run(rootfsPath string, customShell string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("启动 proot 失败: %w", err)
+		return fmt.Errorf("%s", i18n.Tf("proot.start_fail", err))
 	}
 
 	go func() {
@@ -131,7 +134,7 @@ func Run(rootfsPath string, customShell string) error {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
-		return fmt.Errorf("proot 运行失败: %w", err)
+		return fmt.Errorf("%s", i18n.Tf("proot.run_fail", err))
 	}
 
 	signal.Stop(sigChan)

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"groot/internal/i18n"
 	"groot/internal/logger"
 )
 
@@ -94,13 +95,13 @@ func SafeLookPath(name string) (string, error) {
 			abs, _ := filepath.Abs(name)
 			return abs, nil
 		}
-		return "", fmt.Errorf("%s: 未找到或不可执行", name)
+		return "", fmt.Errorf("%s", i18n.Tf("termux.lookpath_not_found", name))
 	}
 
 	// 在 PATH 中搜索
 	path := os.Getenv("PATH")
 	if path == "" {
-		return "", fmt.Errorf("%s: PATH 为空", name)
+		return "", fmt.Errorf("%s", i18n.Tf("termux.lookpath_empty_path", name))
 	}
 	for _, dir := range filepath.SplitList(path) {
 		fullPath := filepath.Join(dir, name)
@@ -108,7 +109,7 @@ func SafeLookPath(name string) (string, error) {
 			return filepath.Clean(fullPath), nil
 		}
 	}
-	return "", fmt.Errorf("%s: 在 PATH 中未找到", name)
+	return "", fmt.Errorf("%s", i18n.Tf("termux.lookpath_not_in_path", name))
 }
 
 // Command 等价于 exec.Command，但会先用 SafeLookPath 解析命令的绝对路径，
@@ -129,7 +130,7 @@ func Command(name string, args ...string) (*exec.Cmd, error) {
 // SafeLookPath 解析 args[0] 的绝对路径，避免内部 LookPath → faccessat2 → SIGSYS。
 func CommandSlice(args []string) (*exec.Cmd, error) {
 	if len(args) == 0 {
-		return nil, fmt.Errorf("CommandSlice: 空参数")
+		return nil, fmt.Errorf("%s", i18n.T("termux.empty_args"))
 	}
 	name := args[0]
 	if !strings.Contains(name, "/") {
@@ -147,7 +148,7 @@ func CommandSlice(args []string) (*exec.Cmd, error) {
 func CleanupEnv() string {
 	oldLDPreload := os.Getenv("LD_PRELOAD")
 	if oldLDPreload != "" {
-		logger.Debug("Termux 检测到 LD_PRELOAD=%s，正在清理", oldLDPreload)
+		logger.Debug(fmt.Sprintf(i18n.Tf("termux.ld_preload_clean", "%s"), oldLDPreload))
 		os.Unsetenv("LD_PRELOAD")
 	}
 	return oldLDPreload
@@ -180,21 +181,21 @@ func EnsureProotInstalled() error {
 		return nil
 	}
 	if !IsTermux() {
-		return fmt.Errorf("系统未安装 proot，请先安装：sudo apt install proot")
+		return fmt.Errorf("%s", i18n.T("termux.proot_not_installed"))
 	}
-	logger.Warn("Termux 中未找到 proot，正在自动安装...")
+	logger.Warn(i18n.T("termux.proot_installing"))
 	// 使用 SafeLookPath 找到 pkg 的完整路径，避免 exec.Command 内部调用 LookPath 触发 SIGSYS
 	pkgPath, err := SafeLookPath("pkg")
 	if err != nil {
-		return fmt.Errorf("未找到 pkg 包管理器: %w", err)
+		return fmt.Errorf("%s: %w", i18n.T("termux.no_pkg"), err)
 	}
 	cmd := exec.Command(pkgPath, "install", "-y", "proot")
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("自动安装 proot 失败: %w", err)
+		return fmt.Errorf("%s: %w", i18n.T("termux.proot_install_fail"), err)
 	}
-	logger.Warn("proot 安装成功")
+	logger.Warn(i18n.T("termux.proot_installed"))
 	return nil
 }
 
@@ -204,21 +205,21 @@ func EnsureChrootInstalled() error {
 		return nil
 	}
 	if !IsTermux() {
-		return fmt.Errorf("系统未安装 chroot，请先安装 coreutils")
+		return fmt.Errorf("%s", i18n.T("termux.chroot_not_installed"))
 	}
 	// Termux 中 chroot 在 proot 包中
-	logger.Warn("Termux 中未找到 chroot，正在自动安装 proot...")
+	logger.Warn(i18n.T("termux.chroot_installing"))
 	pkgPath, err := SafeLookPath("pkg")
 	if err != nil {
-		return fmt.Errorf("未找到 pkg 包管理器: %w", err)
+		return fmt.Errorf("%s: %w", i18n.T("termux.no_pkg"), err)
 	}
 	cmd := exec.Command(pkgPath, "install", "-y", "proot")
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("自动安装 proot 失败: %w", err)
+		return fmt.Errorf("%s: %w", i18n.T("termux.proot_install_fail"), err)
 	}
-	logger.Warn("proot 安装成功")
+	logger.Warn(i18n.T("termux.proot_installed"))
 	return nil
 }
 

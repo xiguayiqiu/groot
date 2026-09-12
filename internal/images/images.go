@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"groot/internal/i18n"
 	"groot/internal/termux"
 )
 
@@ -47,7 +48,7 @@ func LoadImagesConfig(configPath string) (*ImagesConfig, error) {
 	// 如果没有指定路径或者文件不存在，使用嵌入的默认配置
 	data, err = embeddedConfig.ReadFile("images_update.jsonc")
 	if err != nil {
-		return nil, fmt.Errorf("无法读取嵌入的配置文件: %w", err)
+		return nil, fmt.Errorf("%s", i18n.Tf("images.embed_fail", err))
 	}
 
 	return parseConfig(data)
@@ -87,13 +88,13 @@ func removeComments(data []byte) []byte {
 }
 
 func ListAvailableImages(cfg *ImagesConfig) error {
-	fmt.Println("可用的镜像列表：")
+	fmt.Println(i18n.T("images.list_title"))
 	fmt.Println()
 
 	fmt.Println("Void Linux:")
 	voidBase := cfg.Void.Base
 	for arch, libc := range voidBase {
-		fmt.Printf("  架构: %s", arch)
+		fmt.Printf("  "+i18n.T("images.arch")+"\n", arch)
 		if libcMap, ok := libc.(map[string]interface{}); ok {
 			fmt.Print(" (")
 			first := true
@@ -113,7 +114,7 @@ func ListAvailableImages(cfg *ImagesConfig) error {
 	fmt.Println("Ubuntu:")
 	ubuntuBase := cfg.Ubuntu.Base
 	for version, arch := range ubuntuBase {
-		fmt.Printf("  版本: %s", version)
+		fmt.Printf("  "+i18n.T("images.version")+"\n", version)
 		if archMap, ok := arch.(map[string]interface{}); ok {
 			fmt.Print(" (")
 			first := true
@@ -133,12 +134,12 @@ func ListAvailableImages(cfg *ImagesConfig) error {
 	fmt.Println("Alpine:")
 	alpineBase := cfg.Alpine.Base
 	for arch := range alpineBase {
-		fmt.Printf("  架构: %s\n", arch)
+		fmt.Printf("  "+i18n.T("images.arch")+"\n", arch)
 	}
 	fmt.Println()
 
 	fmt.Println("Kali Linux:")
-	fmt.Println("  访问 https://old.kali.org/nethunter-images/ 下载")
+	fmt.Println("  " + i18n.T("images.kali_visit"))
 	fmt.Println()
 
 	return nil
@@ -155,7 +156,7 @@ func openURL(url string) error {
 			return cmd.Start()
 		}
 	}
-	return fmt.Errorf("未找到可用的浏览器打开工具（尝试 xdg-open、open、termux-open-url）")
+	return fmt.Errorf("%s", i18n.T("images.wget_not_found"))
 }
 
 func ensureWgetInstalled() error {
@@ -163,7 +164,7 @@ func ensureWgetInstalled() error {
 		return nil
 	}
 
-	fmt.Println("检测到系统未安装wget，正在安装...")
+	fmt.Println(i18n.T("images.wget_install"))
 
 	var pkgMgr string
 	if _, err := termux.SafeLookPath("apt"); err == nil {
@@ -180,7 +181,7 @@ func ensureWgetInstalled() error {
 		pkgMgr = "xbps-install"
 	}
 	if pkgMgr == "" {
-		return fmt.Errorf("无法检测到系统包管理器，请手动安装wget")
+		return fmt.Errorf("%s", i18n.T("images.wget_install_fail_pkg"))
 	}
 
 	args := map[string][]string{
@@ -194,16 +195,16 @@ func ensureWgetInstalled() error {
 
 	installCmd, err := termux.Command(pkgMgr, args[pkgMgr]...)
 	if err != nil {
-		return fmt.Errorf("无法执行 %s: %v", pkgMgr, err)
+		return fmt.Errorf("%s", i18n.Tf("images.wget_install_exec_fail", pkgMgr, err))
 	}
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr
 	installCmd.Stdin = os.Stdin
 	if err := installCmd.Run(); err != nil {
-		return fmt.Errorf("安装wget失败: %v", err)
+		return fmt.Errorf("%s", i18n.Tf("images.wget_install_fail", err))
 	}
 
-	fmt.Println("wget安装成功！")
+	fmt.Println(i18n.T("images.wget_installed"))
 	return nil
 }
 
@@ -216,7 +217,7 @@ func DownloadImage(url, destDir string) error {
 	destPath := filepath.Join(destDir, fileName)
 
 	if err := ensureWgetInstalled(); err != nil {
-		fmt.Println("无法使用wget，将使用默认下载方式...")
+		fmt.Println(i18n.T("images.wget_fallback"))
 
 		resp, err := http.Get(url)
 		if err != nil {
@@ -225,10 +226,10 @@ func DownloadImage(url, destDir string) error {
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("下载失败: %s", resp.Status)
+			return fmt.Errorf("%s", i18n.Tf("images.download_fail", resp.Status))
 		}
 
-		fmt.Printf("正在下载: %s -> %s\n", url, destPath)
+		fmt.Printf(i18n.T("images.downloading"), url, destPath)
 
 		out, err := os.Create(destPath)
 		if err != nil {
@@ -241,11 +242,11 @@ func DownloadImage(url, destDir string) error {
 			return err
 		}
 
-		fmt.Printf("下载完成: %s\n", destPath)
+		fmt.Printf(i18n.T("images.download_done"), destPath)
 		return nil
 	}
 
-	fmt.Printf("正在下载: %s -> %s\n", url, destPath)
+	fmt.Printf(i18n.T("images.downloading"), url, destPath)
 
 	wgetCmd, err := termux.Command("wget", "-O", destPath, url)
 	if err != nil {
@@ -259,12 +260,12 @@ func DownloadImage(url, destDir string) error {
 		return fmt.Errorf("wget下载失败: %v", err)
 	}
 
-	fmt.Printf("下载完成: %s\n", destPath)
+	fmt.Printf(i18n.T("images.download_done"), destPath)
 	return nil
 }
 
 func DownloadAllImages(cfg *ImagesConfig, destDir string) error {
-	fmt.Println("开始下载所有镜像...")
+	fmt.Println(i18n.T("images.download_all_start"))
 
 	fmt.Println("\n下载 Void Linux 镜像:")
 	voidBase := cfg.Void.Base
@@ -304,12 +305,12 @@ func DownloadAllImages(cfg *ImagesConfig, destDir string) error {
 		}
 	}
 
-	fmt.Println("\n所有镜像下载完成！")
+	fmt.Println("\n" + i18n.T("images.download_all_done"))
 	return nil
 }
 
 func DownloadBySelection(cfg *ImagesConfig, destDir, distro, selection string) error {
-	return fmt.Errorf("此函数已废弃，请使用交互式下载或直接指定完整的下载路径")
+	return fmt.Errorf("%s", i18n.T("images.deprecated"))
 }
 
 func runWhiptailMenu(title, prompt string, items ...string) (string, error) {

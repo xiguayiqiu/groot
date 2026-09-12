@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"groot/internal/i18n"
 	"groot/internal/logger"
 	"groot/internal/termux"
 )
@@ -80,7 +81,7 @@ func DetectDistro() (*Distro, error) {
 		return &Distro{ID: "opensuse", Name: "openSUSE"}, nil
 	}
 
-	return nil, fmt.Errorf("无法检测发行版")
+	return nil, fmt.Errorf("%s", i18n.T("distro.detect_fail"))
 }
 
 func GetInstaller(distro *Distro) (Installer, error) {
@@ -100,17 +101,17 @@ func GetInstaller(distro *Distro) (Installer, error) {
 	case distro.ID == "netbsd":
 		return NewNetBSDInstaller(), nil
 	default:
-		return nil, fmt.Errorf("不支持的发行版: %s", distro.ID)
+		return nil, fmt.Errorf("%s", i18n.Tf("distro.unsupported", distro.ID))
 	}
 }
 
 func InstallDependencies() error {
-	logger.Info("正在检测发行版...")
+	logger.Info(i18n.T("distro.detecting"))
 	distro, err := DetectDistro()
 	if err != nil {
 		return err
 	}
-	logger.Info("检测到发行版: %s (%s)", distro.Name, distro.ID)
+	logger.Info(i18n.Tf("distro.detected", distro.Name, distro.ID))
 
 	installer, err := GetInstaller(distro)
 	if err != nil {
@@ -119,15 +120,15 @@ func InstallDependencies() error {
 
 	hasChroot, hasProot := installer.CheckInstalled()
 	if hasChroot && hasProot {
-		logger.Info("所需的依赖已经全部安装：chroot 和 proot")
+		logger.Info(i18n.T("distro.deps_installed"))
 		return nil
 	} else if hasChroot {
-		logger.Info("chroot 已安装，proot 缺失")
+		logger.Info(i18n.T("distro.chroot_installed_proot_missing"))
 	} else if hasProot {
-		logger.Info("proot 已安装，chroot 缺失")
+		logger.Info(i18n.T("distro.proot_installed_chroot_missing"))
 	}
 
-	logger.Info("使用 %s 进行安装...", installer.Name())
+	logger.Info(i18n.Tf("distro.installing_with", installer.Name()))
 	return installer.Install()
 }
 
@@ -148,7 +149,7 @@ func (a *ArchInstaller) Install() error {
 		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			args = append([]string{sudo, "pacman"}, args...)
 		} else {
-			return fmt.Errorf("需要 root 权限，请使用 sudo")
+			return fmt.Errorf("%s", i18n.T("distro.need_root"))
 		}
 	} else {
 		args = append([]string{"pacman"}, args...)
@@ -179,7 +180,7 @@ func (d *DebianInstaller) Install() error {
 		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			updateCmd = append([]string{sudo}, updateCmd...)
 		} else {
-			return fmt.Errorf("需要 root 权限，请使用 sudo")
+			return fmt.Errorf("%s", i18n.T("distro.need_root"))
 		}
 	} else {
 		// 保持原命令
@@ -192,7 +193,7 @@ func (d *DebianInstaller) Install() error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		logger.Warn("apt update 失败，继续安装: %v", err)
+		logger.Warn(i18n.Tf("distro.apt_update_fail", err))
 	}
 
 	// 再 install
@@ -201,7 +202,7 @@ func (d *DebianInstaller) Install() error {
 		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			args = append([]string{sudo}, args...)
 		} else {
-			return fmt.Errorf("需要 root 权限，请使用 sudo")
+			return fmt.Errorf("%s", i18n.T("distro.need_root"))
 		}
 	}
 
@@ -233,13 +234,13 @@ func (r *RedHatInstaller) Install() error {
 	// 检查是否是 Fedora 或 RHEL/CentOS
 	if pkgMan == "dnf" {
 		// Fedora: 尝试直接安装 proot
-		logger.Info("Fedora 检测到，尝试直接安装 proot...")
+		logger.Info(i18n.T("distro.fedora_try_direct"))
 		args := []string{"install", "-y", "coreutils", "proot"}
 		if os.Geteuid() != 0 {
 			if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 				args = append([]string{sudo, "dnf"}, args...)
 			} else {
-				return fmt.Errorf("需要 root 权限，请使用 sudo")
+				return fmt.Errorf("%s", i18n.T("distro.need_root"))
 			}
 		} else {
 			args = append([]string{"dnf"}, args...)
@@ -253,17 +254,17 @@ func (r *RedHatInstaller) Install() error {
 		cmd.Stderr = os.Stderr
 		err = cmd.Run()
 		if err == nil {
-			logger.Info("Fedora 上成功安装 proot")
+			logger.Info(i18n.T("distro.fedora_success"))
 			return nil
 		}
-		logger.Warn("Fedora 直接安装失败，回退到源码编译: %v", err)
+		logger.Warn(i18n.Tf("distro.fedora_fallback", err))
 	}
 
 	// RHEL/CentOS: 需要源码编译 proot
 	logger.Info("RHEL/CentOS 检测到，需要源码编译 proot")
 
 	// 1. 安装开发依赖
-	logger.Info("正在安装开发依赖...")
+	logger.Info(i18n.T("distro.installing_deps"))
 	devDeps := []string{"groupinstall", "-y", "Development Tools"}
 	devDeps = append(devDeps, "install", "-y", "libarchive-devel", "talloc-devel", "uthash-devel", "git")
 
@@ -271,7 +272,7 @@ func (r *RedHatInstaller) Install() error {
 		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			devDeps = append([]string{sudo, pkgMan}, devDeps...)
 		} else {
-			return fmt.Errorf("需要 root 权限，请使用 sudo")
+			return fmt.Errorf("%s", i18n.T("distro.need_root"))
 		}
 	} else {
 		devDeps = append([]string{pkgMan}, devDeps...)
@@ -288,7 +289,7 @@ func (r *RedHatInstaller) Install() error {
 	}
 
 	// 2. clone proot
-	logger.Info("正在克隆 proot 源码...")
+	logger.Info(i18n.T("distro.cloning_proot"))
 	tempDir := filepath.Join(os.TempDir(), "proot-build")
 	os.RemoveAll(tempDir)
 
@@ -297,7 +298,7 @@ func (r *RedHatInstaller) Install() error {
 	}
 	gitPath, err := termux.SafeLookPath("git")
 	if err != nil {
-		return fmt.Errorf("git 未找到: %v", err)
+		return fmt.Errorf("%s", i18n.Tf("distro.git_not_found", err))
 	}
 	cmd = exec.Command(gitPath, "clone", "https://github.com/proot-me/proot.git", tempDir)
 	cmd.Stdin = os.Stdin
@@ -308,10 +309,10 @@ func (r *RedHatInstaller) Install() error {
 	}
 
 	// 3. make
-	logger.Info("正在编译 proot...")
+	logger.Info(i18n.T("distro.building_proot"))
 	makePath, err := termux.SafeLookPath("make")
 	if err != nil {
-		return fmt.Errorf("make 未找到: %v", err)
+		return fmt.Errorf("%s", i18n.Tf("distro.make_not_found", err))
 	}
 	cmd = exec.Command(makePath, "-C", tempDir)
 	cmd.Stdin = os.Stdin
@@ -322,7 +323,7 @@ func (r *RedHatInstaller) Install() error {
 	}
 
 	// 4. install
-	logger.Info("正在安装 proot...")
+	logger.Info(i18n.T("distro.installing_proot"))
 	cmd = exec.Command(makePath, "-C", tempDir, "install")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -331,7 +332,7 @@ func (r *RedHatInstaller) Install() error {
 		return err
 	}
 
-	logger.Info("proot 成功安装!")
+	logger.Info(i18n.T("distro.proot_installed"))
 	return nil
 }
 
@@ -350,7 +351,7 @@ func (a *AlpineInstaller) Install() error {
 		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			args = append([]string{sudo, "apk"}, args...)
 		} else {
-			return fmt.Errorf("需要 root 权限，请使用 sudo")
+			return fmt.Errorf("%s", i18n.T("distro.need_root"))
 		}
 	} else {
 		args = append([]string{"apk"}, args...)
@@ -380,7 +381,7 @@ func (s *OpenSUSEInstaller) Install() error {
 		if sudo, err := termux.SafeLookPath("sudo"); err == nil {
 			args = append([]string{sudo, "zypper"}, args...)
 		} else {
-			return fmt.Errorf("需要 root 权限，请使用 sudo")
+			return fmt.Errorf("%s", i18n.T("distro.need_root"))
 		}
 	} else {
 		args = append([]string{"zypper"}, args...)
@@ -405,9 +406,9 @@ func (f *FreeBSDInstaller) CheckInstalled() (bool, bool) {
 	return err1 == nil, err2 == nil
 }
 func (f *FreeBSDInstaller) Install() error {
-	logger.Info("FreeBSD: chroot 已默认安装")
-	logger.Warn("FreeBSD: Linux 版 proot 无法在 FreeBSD 上运行")
-	logger.Warn("FreeBSD: 可以使用原生的 chroot 或 jail 替代")
+	logger.Info(i18n.T("distro.freebsd_chroot"))
+	logger.Warn(i18n.T("distro.freebsd_noproot"))
+	logger.Warn(i18n.T("distro.freebsd_hint"))
 	return nil
 }
 
@@ -421,8 +422,8 @@ func (n *NetBSDInstaller) CheckInstalled() (bool, bool) {
 	return err1 == nil, err2 == nil
 }
 func (n *NetBSDInstaller) Install() error {
-	logger.Info("NetBSD: chroot 已默认安装")
-	logger.Warn("NetBSD: Linux 版 proot 无法在 NetBSD 上运行")
-	logger.Warn("NetBSD: 可以使用原生的 chroot 替代")
+	logger.Info(i18n.T("distro.netbsd_chroot"))
+	logger.Warn(i18n.T("distro.netbsd_noproot"))
+	logger.Warn(i18n.T("distro.netbsd_hint"))
 	return nil
 }

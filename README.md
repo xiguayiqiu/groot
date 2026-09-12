@@ -11,6 +11,7 @@ groot 是一个基于 Go 语言开发的轻量级隔离工具，支持 **chroot*
 - **智能环境配置**：自动挂载、环境变量、符号链接修复
 - **pm 子命令**：镜像下载与管理
 - **Termux 支持**：Android 设备上也能运行
+- **国际化 (i18n)**：支持中文和英文，基于 LANG 环境变量自动切换
 
 ## 🔐 多模式支持
 
@@ -23,6 +24,7 @@ groot 是一个基于 Go 语言开发的轻量级隔离工具，支持 **chroot*
 | `-u <user>` | 指定用户 |
 | `--net / -net` | chroot 模式网络隔离 |
 | `--check` | 检查设备是否符合要求 |
+| `--termux-lang` | 配置 Termux 语言（生成 ~/.termux/locale.conf） |
 
 ## 🐧 支持的发行版
 
@@ -41,13 +43,40 @@ groot 通过 `/etc/os-release` 自动检测发行版及其衍生版：
 
 ### 发行版特定环境变量
 
-每个发行版都有专属的环境变量配置：
+groot 不再硬编码发行版特定的环境变量，而是从 rootfs 的配置文件中自动加载。用户在 rootfs 中配置的变量不会被覆盖。
 
-- **Alpine**: `APK_CACHE`, `OPENRC`, `MUSL_LOCPATH`
-- **Arch**: `PACMAN`, `MAKEFLAGS`, `PKGEXT`
-- **Debian**: `DEBIAN_FRONTEND`, `DPKG_*`, `APT_*`
-- **RHEL**: `DNF`, `YUM`, `RPM_OPTS`, `SELINUX`
-- **Void**: `XBPS_*`, `RUNIT`
+## 🌍 国际化支持 (i18n)
+
+groot 支持中文和英文两种语言，基于 LANG 环境变量自动切换：
+
+### 语言检测优先级
+
+1. `~/.config/groot/lang` 配置文件（用户手动设置）
+2. rootfs 的 `/etc/locale.conf` 文件
+3. Termux 环境：读取 `~/.termux/locale.conf`
+   - `LANG=zh_CN.UTF-8` → 中文
+   - `LANG=en_US.UTF-8` 或不存在 → 英文
+4. `LANG` 环境变量
+5. 默认英文
+
+### 切换语言
+
+```bash
+# Termux 用户：使用 --termux-lang 参数唤起 TUI 配置
+groot --termux-lang
+
+# 手动设置语言（通用）
+echo "zh" > ~/.config/groot/lang   # 中文
+echo "en" > ~/.config/groot/lang   # 英文
+
+# Termux 用户（直接编辑配置文件）
+echo "LANG=zh_CN.UTF-8" > ~/.termux/locale.conf
+
+# 或通过环境变量
+export LANG=zh_CN.UTF-8
+```
+
+首次运行时，如果检测到 Termux 环境且无 `~/.termux/locale.conf` 文件，会启动交互式语言选择，选择后自动生成该文件。
 
 ## 🔧 自动化环境配置
 
@@ -56,6 +85,19 @@ groot 通过 `/etc/os-release` 自动检测发行版及其衍生版：
 自动挂载以下文件系统：
 - `/proc`, `/sys`, `/dev`, `/dev/pts`, `/dev/shm`
 - `/run`, `/tmp`, `/var/run`, `/var/tmp`
+
+### 环境变量自动加载
+
+groot 从 rootfs 的配置文件中自动加载环境变量，不会覆盖用户在 rootfs 中的配置：
+
+| 配置文件 | 用途 |
+|----------|------|
+| `/etc/locale.conf` | 语言环境（LANG、LC_ALL、LANGUAGE） |
+| `/etc/environment` | 系统级环境变量 |
+| `/etc/passwd` | 用户信息（HOME、USER、SHELL） |
+| `/etc/hostname` | 主机名 |
+
+shell 脚本（`/etc/profile`、`/etc/profile.d/*.sh`、`~/.bashrc` 等）由 login shell 在启动时自行 source，groot 不会预解析它们，确保复杂的 shell 语法（如 `PS1`、`PS0`）能被正确执行。
 
 ### 设备节点
 
@@ -272,6 +314,9 @@ sudo ./groot -k /path/to/rootfs
 │   │   └── mount.go         # 完美挂载管理
 │   ├── env/
 │   │   └── env.go            # 完美发行版识别变量配置
+│   ├── i18n/
+│   │   ├── i18n.go           # 国际化框架与语言检测
+│   │   └── messages.go       # 中英文翻译字符串
 │   ├── permission/
 │   │   └── permission.go     # 权限检测
 │   └── logger/
@@ -304,7 +349,48 @@ sudo ./groot -k /path/to/rootfs
 
 ## 📋 更新日志
 
-### 2026-9.11 — V0.3.2 (当前版本)
+### 2026-9.12 — V0.3.2.2 (当前版本)
+
+#### 🌍 国际化 (i18n)
+
+- **新增 i18n 国际化支持**：所有用户可见的字符串支持中文和英文
+  - 新增 `internal/i18n/` 包，提供翻译框架和 200+ 翻译 key
+  - 基于 LANG 环境变量自动检测语言，支持从配置文件、locale.conf、环境变量读取
+  - Termux 环境自动读取 `~/.termux/locale.conf` 判断语言（`zh_CN.UTF-8` → 中文，其他 → 英文）
+  - 新增 `--termux-lang` 参数，可随时唤起 TUI 切换 Termux 语言
+  - 用户可通过 `~/.config/groot/lang` 手动切换语言
+- **替换所有源文件中的硬编码中文字符串**：
+  - `cmd/groot/main.go`：CLI 帮助文本、错误消息
+  - `internal/chroot/chroot.go`：chroot 模式日志
+  - `internal/proot/proot.go`：proot 模式日志
+  - `internal/proot/alpine-proot.go`：Alpine 专属模式
+  - `internal/mount/mount.go`：挂载/卸载日志
+  - `internal/images/images.go`：镜像管理
+  - `internal/distro/distro.go`：发行版检测
+  - `internal/network/network.go`：网络配置
+  - `internal/cleanup/cleanup.go`：清理
+  - `internal/security/security.go`：安全限制
+  - `internal/termux/termux.go`：Termux 适配
+  - `internal/logger/logger.go`：日志 Banner
+  - `internal/check/check.go`：设备检查报告
+  - `internal/usercheck/usercheck.go`：用户权限检查
+  - `internal/env/env.go`：环境变量加载
+
+#### 🔧 修复与优化
+
+- **修复 rootfs 配置加载问题**：彻底移除所有硬编码环境变量，改为从 rootfs 配置文件自动加载
+  - 移除硬编码：`LANG`、`LC_ALL`、`LC_CTYPE`、`EDITOR`、`VISUAL`、`PAGER`、`LESS`、`TMPDIR`、`MAIL`、`TZ`、`HISTFILE`、`HISTSIZE`、`HISTFILESIZE`、`XDG_*` 等
+  - 移除所有发行版特定硬编码：`DEBIAN_FRONTEND`、`PACMAN`、`DNF`、`XBPS_*`、`SELINUX` 等
+  - 现在仅设置 groot 自身必需的变量：`HOME`、`USER`、`LOGNAME`、`SHELL`、`PWD`、`HOSTNAME`
+  - 从 `/etc/locale.conf` 自动加载语言环境，并智能推导 `LC_ALL`、`LC_CTYPE`、`LANGUAGE`
+  - 从 `/etc/environment` 自动加载系统级环境变量
+  - shell 脚本（`/etc/profile`、`/etc/profile.d/*.sh`、`~/.bashrc`）由 login shell 自行 source，不再由 groot 预解析
+  - 修复了预解析 shell 脚本导致 `PS0`/`PS1` 等包含 shell 语法的变量被错误设为字面值的问题
+- **修复 pacman wrapper 问题**：移除 wrapper 中硬编码的 `export LC_ALL=C`，允许用户 locale 设置生效
+- **移除 pacman wrapper DEBUG 信息**：清理 `echo "DEBUG: ..."` 输出
+- **改善卸载容错性**：`UnmountAll` 对 `EINVAL` 错误降级为 Debug 日志，命名空间销毁时自动清理
+
+### 2026-9.11 — V0.3.2
 
 #### 🆕 全新功能
 

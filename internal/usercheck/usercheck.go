@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"groot/internal/i18n"
 	"groot/internal/logger"
 )
 
@@ -28,12 +29,12 @@ func CheckUser(rootfsPath string, username string) (*UserInfo, error) {
 	passwdPath := filepath.Join(rootfsPath, "etc", "passwd")
 	_, err := os.Stat(passwdPath)
 	if err != nil {
-		return nil, fmt.Errorf("找不到 passwd 文件: %w", err)
+		return nil, fmt.Errorf("%s", i18n.Tf("usercheck.no_passwd", err))
 	}
 
 	file, err := os.Open(passwdPath)
 	if err != nil {
-		return nil, fmt.Errorf("无法读取 passwd 文件: %w", err)
+		return nil, fmt.Errorf("%s", i18n.Tf("usercheck.read_passwd_fail", err))
 	}
 	defer file.Close()
 
@@ -66,10 +67,10 @@ func CheckUser(rootfsPath string, username string) (*UserInfo, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("读取 passwd 出错: %w", err)
+		return nil, fmt.Errorf("%s", i18n.Tf("usercheck.parse_passwd_fail", err))
 	}
 
-	return nil, fmt.Errorf("用户 \"%s\" 在 rootfs 中不存在", username)
+	return nil, fmt.Errorf("%s", i18n.Tf("usercheck.user_not_exist", username))
 }
 
 func CheckAndFixUser(rootfsPath string, username string) (*UserInfo, error) {
@@ -128,8 +129,8 @@ func checkSudoFiles(rootfsPath string) {
 	sudoBin := filepath.Join(rootfsPath, "bin", "sudo")
 	if stat, err := getFileStat(sudoBin); err == nil {
 		if stat.Mode&04000 == 0 {
-			logger.Warn("警告: /bin/sudo 没有 setuid 位")
-			logger.Warn("  请在 root 权限下修复: chmod 4755 /bin/sudo")
+			logger.Warn(i18n.T("usercheck.warn_sudo_nosuid"))
+			logger.Warn(i18n.T("usercheck.warn_sudo_fix"))
 		}
 		if stat.Uid != 0 {
 			logger.Warn("警告: /bin/sudo 所有者不是 root")
@@ -141,8 +142,8 @@ func checkSudoFiles(rootfsPath string) {
 	sudoBinUsr := filepath.Join(rootfsPath, "usr", "bin", "sudo")
 	if stat, err := getFileStat(sudoBinUsr); err == nil {
 		if stat.Mode&04000 == 0 {
-			logger.Warn("警告: /usr/bin/sudo 没有 setuid 位")
-			logger.Warn("  请在 root 权限下修复: chmod 4755 /usr/bin/sudo")
+			logger.Warn(i18n.T("usercheck.warn_sudo_nosuid"))
+			logger.Warn(i18n.T("usercheck.warn_sudo_fix"))
 		}
 		if stat.Uid != 0 {
 			logger.Warn("警告: /usr/bin/sudo 所有者不是 root")
@@ -202,8 +203,8 @@ func checkShadowFile(rootfsPath string) {
 	}
 
 	if stat.Mode&0077 != 0 {
-		logger.Warn("警告: /etc/shadow 权限过宽")
-		logger.Warn("  建议: chmod 0400 /etc/shadow")
+		logger.Warn(i18n.T("usercheck.warn_shadow_wide"))
+		logger.Warn(i18n.T("usercheck.warn_shadow_fix"))
 	}
 }
 
@@ -218,13 +219,13 @@ func checkPAMFiles(rootfsPath string) {
 func checkNSSFiles(rootfsPath string) {
 	nsswitchPath := filepath.Join(rootfsPath, "etc", "nsswitch.conf")
 	if _, err := os.Stat(nsswitchPath); err != nil {
-		logger.Warn("警告: /etc/nsswitch.conf 文件不存在")
-		logger.Warn("  建议: 确保 rootfs 完整")
+		logger.Warn(i18n.T("usercheck.warn_nsswitch"))
+		logger.Warn(i18n.T("usercheck.warn_nsswitch_fix"))
 	}
 }
 
 func FixCommonIssues(rootfsPath string, userInfo *UserInfo) {
-	logger.Info("========== 开始修复权限 ==========")
+	logger.Info(i18n.T("usercheck.start_fix"))
 	logger.Info("目标目录: %s", rootfsPath)
 
 	// 获取绝对路径
@@ -316,7 +317,7 @@ func FixCommonIssues(rootfsPath string, userInfo *UserInfo) {
 	printFileStatus(rootfsPath + "/bin/su")
 	printFileStatus(rootfsPath + "/usr/bin/su")
 
-	logger.Info("========== 权限修复完成 ==========")
+	logger.Info(i18n.T("usercheck.end_fix"))
 }
 
 func printFileStatus(path string) {

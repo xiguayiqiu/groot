@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"groot/internal/i18n"
 	"groot/internal/logger"
 )
 
@@ -86,10 +87,10 @@ func DefaultSecurityConfig() *SecurityConfig {
 // HardenProcfs 硬化 procfs 挂载
 func HardenProcfs(rootfsPath string) error {
 	procPath := filepath.Join(rootfsPath, "proc")
-	logger.Info("正在硬化 procfs: %s", procPath)
+	logger.Info(i18n.Tf("security.hardening_procfs", procPath))
 
 	if err := os.MkdirAll(filepath.Join(procPath, "sys"), 0555); err != nil {
-		logger.Debug("创建 proc/sys 目录失败: %v", err)
+		logger.Debug(i18n.T("security.procfs_dir_fail"))
 	}
 
 	flags := uintptr(syscall.MS_RDONLY | syscall.MS_NOEXEC | syscall.MS_NOSUID | syscall.MS_NODEV)
@@ -98,13 +99,13 @@ func HardenProcfs(rootfsPath string) error {
 			logger.Debug("procfs 已存在，尝试重新挂载")
 			flags |= syscall.MS_REMOUNT | syscall.MS_BIND
 			if err := syscall.Mount("proc", procPath, "proc", flags, "hidepid=2,gid=65534"); err != nil {
-				logger.Warn("重新挂载 procfs 失败: %v", err)
+				logger.Warn(i18n.T("security.procfs_remount_fail"))
 			}
 		} else {
-			logger.Warn("挂载硬化 procfs 失败: %v，继续执行...", err)
+			logger.Warn(i18n.T("security.procfs_mount_fail"))
 		}
 	} else {
-		logger.Debug("procfs 已成功硬化挂载")
+		logger.Debug(i18n.T("security.procfs_done"))
 	}
 
 	sensitiveFiles := []string{
@@ -144,9 +145,9 @@ func HardenProcfs(rootfsPath string) error {
 			continue
 		}
 		if err := syscall.Mount("tmpfs", targetPath, "tmpfs", syscall.MS_RDONLY|syscall.MS_NOEXEC|syscall.MS_NOSUID|syscall.MS_NODEV, "size=0"); err != nil {
-			logger.Debug("隐藏敏感文件 %s 失败: %v", f, err)
+			logger.Debug(i18n.Tf("security.hide_fail", f))
 		} else {
-			logger.Debug("成功隐藏敏感文件: %s", f)
+			logger.Debug(i18n.Tf("security.hide_ok", f))
 		}
 	}
 	return nil
@@ -162,16 +163,16 @@ func MountReadOnly(source, target, fstype string, data string) error {
 func DisablePtrace() error {
 	_, _, err := syscall.Syscall6(syscall.SYS_PRCTL, 4, 0, 0, 0, 0, 0)
 	if err != 0 {
-		return fmt.Errorf("prctl PR_SET_DUMPABLE 失败: %v", err)
+		return fmt.Errorf("%s", i18n.T("security.prctl_fail"))
 	}
 	_, _, err = syscall.Syscall6(syscall.SYS_PRCTL, 22, 0, 0, 0, 0, 0)
 	if err != 0 {
-		return fmt.Errorf("prctl PR_SET_PTRACER 失败: %v", err)
+		return fmt.Errorf("%s", i18n.T("security.ptrace_fail"))
 	}
 
 	if _, err := os.Stat("/proc/sys/kernel/yama/ptrace_scope"); err == nil {
 		if err := os.WriteFile("/proc/sys/kernel/yama/ptrace_scope", []byte("3"), 0644); err != nil {
-			logger.Debug("设置 Yama ptrace_scope 失败: %v", err)
+			logger.Debug(i18n.T("security.yama_fail"))
 		}
 	}
 
@@ -217,12 +218,12 @@ func DropCapabilities() error {
 		CAP_CHECKPOINT_RESTORE,
 	}
 
-	logger.Debug("尝试丢弃危险 capabilities")
+	logger.Debug(i18n.T("security.drop_caps"))
 
 	for _, cap := range dangerousCaps {
 		_, _, err := syscall.Syscall6(syscall.SYS_PRCTL, 7, uintptr(cap), 0, 0, 0, 0)
 		if err != 0 {
-			logger.Debug("丢弃 capability %d 失败: %v", cap, err)
+			logger.Debug(i18n.Tf("security.drop_cap_fail", cap))
 		}
 	}
 
@@ -263,9 +264,9 @@ func SecureChroot(path string) error {
 
 // ApplySecurity 应用所有安全限制
 func ApplySecurity() error {
-	logger.Info("正在应用安全限制...")
+	logger.Info(i18n.T("security.applying"))
 	if err := DisablePtrace(); err != nil {
-		logger.Debug("禁用 ptrace 失败: %v", err)
+		logger.Debug(i18n.T("security.ptrace_disable_fail"))
 	}
 	if err := LimitCoreDump(); err != nil {
 		logger.Debug("设置核心转储限制失败: %v", err)

@@ -5,6 +5,8 @@ import (
 	"io"
 	"log"
 	"os"
+
+	"groot/internal/i18n"
 )
 
 // 日志级别
@@ -107,13 +109,9 @@ func FatalIfError(err error, format string, v ...interface{}) {
 
 // ColoredBanner 返回彩色横幅字符串（不带换行）
 func ColoredBanner() string {
-	line := fmt.Sprintf(
-		"%s[%s]%s %s如果你喜欢请前往 %sgyscan.space%s 下载 gyscan 吧～%s",
-		colorCyan, "Groot", colorReset,
-		colorGreen, colorCyan, colorGreen, colorReset,
-	)
-	if !colorize {
-		line = "[Groot] 如果你喜欢请前往 gyscan.space 下载 gyscan 吧～"
+	banner := i18n.T("logger.banner")
+	if colorize {
+		return fmt.Sprintf("%s%s%s", colorGreen, banner, colorReset)
 	}
-	return line
+	return banner
 }

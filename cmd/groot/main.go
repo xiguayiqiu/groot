@@ -11,6 +11,7 @@ import (
 	"groot/internal/chroot"
 	"groot/internal/check"
 	"groot/internal/images"
+	"groot/internal/i18n"
 	"groot/internal/logger"
 	"groot/internal/mount"
 	"groot/internal/network"
@@ -22,7 +23,7 @@ import (
 )
 
 const (
-	version = "0.3.2"
+	version = "0.3.2.2"
 )
 
 func detectDistro() string {
@@ -75,12 +76,14 @@ func detectDistro() string {
 }
 
 func main() {
+	i18n.Init()
+
 	// 处理内部子命令和版本参数
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "chroot-child":
 			if len(os.Args) < 3 {
-				fmt.Fprintf(os.Stderr, "错误: chroot-child 子命令需要 rootfs 路径参数\n")
+				fmt.Fprintf(os.Stderr, "%s\n", i18n.T("cli.error.child_needs_rootfs"))
 				os.Exit(1)
 			}
 			customShell := ""
@@ -96,73 +99,73 @@ func main() {
 				netMode = os.Args[5]
 			}
 			if err := chroot.ChildMain(os.Args[2], customShell, customUser, netMode); err != nil {
-				fmt.Fprintf(os.Stderr, "错误: %v\n", err)
+				fmt.Fprintf(os.Stderr, "%s\n", i18n.Tf("cli.error.generic", err))
 				os.Exit(1)
 			}
 			return
 
 		case "-v", "--version":
 			fmt.Printf("groot version %s\n", version)
-			fmt.Println("作者：弈秋忘忧白帽")
-			fmt.Println("开源协议：MIT")
+			fmt.Println(i18n.T("cli.author.name"))
+			fmt.Println(i18n.T("cli.author.license"))
 			return
 		}
 	}
 
 	app := &cli.App{
 		Name:        "groot",
-		Usage:       "Go 版双模式隔离工具（chroot/proot）",
+		Usage:       i18n.T("cli.usage.desc"),
 		Version:     version,
-		Copyright:   "MIT License - Copyright © 2026 弈秋忘忧白帽",
+		Copyright:   i18n.T("cli.copyright"),
 		HideVersion: true,
 		Commands: []*cli.Command{
 			{
 				Name:  "pm",
-				Usage: "包管理器：管理 rootfs 镜像下载和构建",
+				Usage: i18n.T("cli.usage.pm"),
 				Subcommands: []*cli.Command{
 					{
 						Name:  "list",
-						Usage: "列出可用的 rootfs 镜像",
+						Usage: i18n.T("cli.usage.pm_list"),
 						Flags: []cli.Flag{
 							&cli.StringFlag{
 								Name:  "config",
-								Usage: "指定镜像配置文件路径（默认使用嵌入的配置）",
+								Usage: i18n.T("cli.usage.pm_config"),
 							},
 						},
 						Action: func(cCtx *cli.Context) error {
 							configPath := cCtx.String("config")
 							cfg, err := images.LoadImagesConfig(configPath)
 							if err != nil {
-								return fmt.Errorf("加载配置失败: %v", err)
-							}
+							return fmt.Errorf("%s", i18n.Tf("cli.config_load_fail", err))
+						}
 
-							return images.ListAvailableImages(cfg)
+						return images.ListAvailableImages(cfg)
 						},
 					},
 					{
 						Name:  "download",
-						Usage: "下载 rootfs 镜像",
+						Usage: i18n.T("cli.usage.pm_download"),
 						Flags: []cli.Flag{
 							&cli.StringFlag{
 								Name:  "config",
-								Usage: "指定镜像配置文件路径（默认使用嵌入的配置）",
+								Usage: i18n.T("cli.usage.pm_config"),
 							},
 							&cli.StringFlag{
 								Name:  "dest",
-								Usage: "指定下载目录",
+								Usage: i18n.T("cli.usage.pm_dest"),
 								Value: "downloads",
 							},
 							&cli.BoolFlag{
 								Name:  "all",
-								Usage: "下载所有镜像",
+								Usage: i18n.T("cli.usage.pm_all"),
 							},
 							&cli.StringFlag{
 								Name:  "distro",
-								Usage: "指定发行版（void/ubuntu/alpine）",
+								Usage: i18n.T("cli.usage.pm_distro"),
 							},
 							&cli.StringFlag{
 								Name:  "select",
-								Usage: "选择要下载的镜像（架构/版本/库）",
+								Usage: i18n.T("cli.usage.pm_select"),
 							},
 						},
 						Action: func(cCtx *cli.Context) error {
@@ -177,12 +180,12 @@ func main() {
 								destDir = filepath.Join(wd, destDir)
 							}
 
-							cfg, err := images.LoadImagesConfig(configPath)
-							if err != nil {
-								return fmt.Errorf("加载配置失败: %v", err)
-							}
+						cfg, err := images.LoadImagesConfig(configPath)
+						if err != nil {
+							return fmt.Errorf("%s", i18n.Tf("cli.config_load_fail", err))
+						}
 
-							if cCtx.Bool("all") {
+						if cCtx.Bool("all") {
 								return images.DownloadAllImages(cfg, destDir)
 							}
 
@@ -192,34 +195,34 @@ func main() {
 					},
 					{
 						Name:  "make",
-						Usage: "构建 rootfs 镜像",
+						Usage: i18n.T("cli.usage.pm_make"),
 						Flags: []cli.Flag{
 							&cli.StringFlag{
 								Name:  "distro",
-								Usage: "指定发行版（debian/ubuntu/arch/alpine/void）",
+								Usage: i18n.T("cli.usage.pm_distro"),
 							},
 							&cli.StringFlag{
 								Name:  "version",
-								Usage: "指定发行版版本（如 12 对于 Debian, 22.04 对于 Ubuntu, v3.20 对于 Alpine, x86_64 对于 Void）",
+								Usage: i18n.T("cli.usage.pm_make_ver"),
 							},
 							&cli.StringFlag{
 								Name:  "arch",
-								Usage: "指定架构（amd64/aarch64）",
+								Usage: i18n.T("cli.usage.pm_make_arch"),
 								Value: "amd64",
 							},
 							&cli.StringFlag{
 								Name:  "type",
-								Usage: "指定构建类型：minimal（精简版）、standard（标准版）、full（完整版）（可选，默认 standard）",
+								Usage: i18n.T("cli.usage.pm_make_type"),
 								Value: "standard",
 							},
 							&cli.StringFlag{
 								Name:  "dest",
-								Usage: "指定构建目录",
+								Usage: i18n.T("cli.usage.pm_make_dest"),
 								Value: "rootfs",
 							},
 							&cli.StringFlag{
 								Name:  "mirror",
-								Usage: "指定镜像源：tsinghua（清华）、ustc（中科大）、official（官方）或自定义 URL（可选，默认 official）",
+								Usage: i18n.T("cli.usage.pm_make_mirror"),
 							},
 						},
 						Action: func(cCtx *cli.Context) error {
@@ -269,54 +272,64 @@ func main() {
 			&cli.StringFlag{
 				Name:    "c",
 				Aliases: []string{"chroot"},
-				Usage:   "chroot 模式：指定 rootfs 目录（需要 root 权限）",
+				Usage:   i18n.T("cli.usage.chroot"),
 			},
 			&cli.StringFlag{
 				Name:    "p",
 				Aliases: []string{"proot"},
-				Usage:   "proot 模式：指定 rootfs 目录（无需 root 权限）",
+				Usage:   i18n.T("cli.usage.proot"),
 			},
 			&cli.StringFlag{
 				Name:  "z",
-				Usage: "专属 proot 兼容模式：指定发行版（alpine/debian），然后指定 rootfs 目录",
+				Usage: i18n.T("cli.usage.compat"),
 			},
 			&cli.StringFlag{
 				Name:  "b",
-				Usage: "指定容器目录的 shell 解释器路径（例如：/bin/ash、/bin/bash）",
+				Usage: i18n.T("cli.usage.shell"),
 			},
 			&cli.StringFlag{
 				Name:    "k",
 				Aliases: []string{"cleanup"},
-				Usage:   "清理指定 rootfs 下的残留挂载点",
+				Usage:   i18n.T("cli.usage.cleanup"),
 			},
 			&cli.BoolFlag{
 				Name:  "verbose",
-				Usage: "启用详细日志",
+				Usage: i18n.T("cli.usage.verbose"),
 			},
 			&cli.BoolFlag{
 				Name:  "debug",
-				Usage: "启用调试日志",
+				Usage: i18n.T("cli.usage.debug"),
 			},
 			&cli.BoolFlag{
 				Name:  "l",
-				Usage: "列出支持的发行版列表",
+				Usage: i18n.T("cli.usage.list"),
 			},
 			&cli.BoolFlag{
 				Name:    "d",
 				Aliases: []string{"download"},
-				Usage:   "打开浏览器选择并下载 rootfs 镜像",
+				Usage:   i18n.T("cli.usage.download"),
 			},
 			&cli.BoolFlag{
 				Name:  "check",
-				Usage: "检查设备是否符合要求（可加 proot/chroot 参数指定检查类型）",
+				Usage: i18n.T("cli.usage.check"),
 			},
 			&cli.BoolFlag{
 				Name:    "net",
 				Aliases: []string{"network"},
-				Usage:   "为 chroot 创建独立网络命名空间（仅 chroot 模式有效）",
+				Usage:   i18n.T("cli.usage.net"),
+			},
+			&cli.BoolFlag{
+				Name:  "termux-lang",
+				Usage: i18n.T("cli.usage.termux_lang"),
 			},
 		},
 		Before: func(cCtx *cli.Context) error {
+			// --termux-lang: 显示 Termux 语言选择 TUI
+			if cCtx.Bool("termux-lang") {
+				i18n.ShowTermuxLangTUI()
+				os.Exit(0)
+			}
+
 			if cCtx.Bool("debug") {
 				logger.SetLevel(logger.LevelDebug)
 			} else if cCtx.Bool("verbose") {
@@ -330,7 +343,7 @@ func main() {
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.Bool("v") || cCtx.Bool("version") {
 				fmt.Printf("groot version %s\n", version)
-				fmt.Println("MIT License - Copyright © 2026 弈秋忘忧白帽")
+				fmt.Println(i18n.T("cli.copyright"))
 				return nil
 			}
 
@@ -398,9 +411,9 @@ func main() {
 				whiptailPath, err := termux.SafeLookPath("whiptail")
 				if err != nil {
 					// 尝试安装 whiptail
-					fmt.Println("提示: whiptail 没有找到，尝试安装它以获得更好的交互体验...")
+					fmt.Println(i18n.T("cli.hint.install_whiptail"))
 					distro := detectDistro()
-					fmt.Printf("检测到当前系统是: %s\n", distro)
+					fmt.Printf("%s", i18n.Tf("cli.hint.detect_distro", distro))
 					installed := false
 					switch distro {
 					case "alpine":
@@ -417,7 +430,7 @@ func main() {
 						}
 					case "void":
 						if _, err := termux.SafeLookPath("xbps-install"); err == nil {
-							fmt.Println("找到 xbps-install，正在安装 newt 包...")
+							fmt.Println(i18n.T("cli.hint.xbps_installing"))
 							cmd, err := termux.Command("xbps-install", "-Sy", "newt")
 							if err != nil {
 								break
@@ -427,15 +440,15 @@ func main() {
 							cmd.Stdin = os.Stdin
 							if err := cmd.Run(); err == nil {
 								installed = true
-							} else {
-								fmt.Printf("安装 newt 失败: %v\n", err)
+						} else {
+							fmt.Printf("%s", i18n.Tf("cli.hint.install_newt_fail", err))
 							}
 						} else {
-							fmt.Printf("未找到 xbps-install: %v\n", err)
+							fmt.Printf("%s", i18n.Tf("cli.hint.install_newt_xbps_fail", err))
 						}
 					case "debian":
 						if _, err := termux.SafeLookPath("apt"); err == nil {
-							fmt.Println("找到 apt，正在安装 newt 包...")
+							fmt.Println(i18n.T("cli.hint.apt_installing"))
 							cmd, err := termux.Command("apt", "install", "-y", "newt")
 							if err != nil {
 								break
@@ -449,7 +462,7 @@ func main() {
 						}
 					case "arch":
 						if _, err := termux.SafeLookPath("pacman"); err == nil {
-							fmt.Println("找到 pacman，正在安装 newt 包...")
+							fmt.Println(i18n.T("cli.hint.pacman_installing"))
 							cmd, err := termux.Command("pacman", "-S", "--noconfirm", "newt")
 							if err != nil {
 								break
@@ -469,58 +482,58 @@ func main() {
 
 					if err != nil {
 						// 回退到文本显示
-						fmt.Println("将使用文本交互模式")
+						fmt.Println(i18n.T("cli.hint.text_mode"))
 						fmt.Println()
-						fmt.Println("支持的发行版列表：")
+						fmt.Println(i18n.T("cli.distro.title") + "：")
 						fmt.Println()
-						fmt.Println("=== download 方式（pm download） ===")
-						fmt.Println("| 发行版   | proot | chroot                |")
+						fmt.Println(i18n.T("cli.dl_mode_header"))
+						fmt.Println("| " + i18n.T("cli.distro.supported") + "   | proot | chroot                |")
 						fmt.Println("| :------- | :---- | :-------------------- |")
 						fmt.Println("| Alpine   | ✓     | ✓                     |")
 						fmt.Println("| Ubuntu   | -     | ✓                     |")
 						fmt.Println("| Void     | -     | ✓                     |")
 						fmt.Println()
-						fmt.Println("=== make 方式（pm make） ===")
-						fmt.Println("| 发行版   | proot | chroot                |")
+						fmt.Println(i18n.T("cli.make_mode_header"))
+						fmt.Println("| " + i18n.T("cli.distro.supported") + "   | proot | chroot                |")
 						fmt.Println("| :------- | :---- | :-------------------- |")
 						fmt.Println("| Debian   | ✓     | ✓                     |")
 						fmt.Println("| Ubuntu   | -     | ✓                     |")
 						fmt.Println("| Arch     | -     | ✓ (仅在 Arch 系统有效)|")
 						fmt.Println()
-						fmt.Println("说明：")
-						fmt.Println("  ✓ 完美支持")
-						fmt.Println("  - 仅 chroot 模式支持")
+						fmt.Println(i18n.T("cli.distro.note") + "：")
+						fmt.Println("  ✓ " + i18n.T("cli.distro.full_support"))
+						fmt.Println("  - " + i18n.T("cli.distro.chroot_only"))
 						fmt.Println()
 						return nil
 					}
 				}
 
-				// 使用 whiptail 显示
-				msg := `支持的发行版列表
+			// 使用 whiptail 显示
+			msg := i18n.T("cli.distro.title") + `
 +------------------------------+
-| download 方式（pm download） |
+` + i18n.T("cli.dl_mode_table") + `
 +------------------------------+
-| 发行版   | proot | chroot    |
+| ` + i18n.T("cli.distro.supported") + `   | proot | chroot    |
 +--------- + ----- + ----------+
 | Alpine   | ✓     | ✓         |
 | Ubuntu   | -     | ✓         |
 | Void     | -     | ✓         |
 +------------------------------+
-| make 方式（pm make）         |
+` + i18n.T("cli.make_mode_table") + `
 +------------------------------+
-| 发行版   | proot | chroot    |
+| ` + i18n.T("cli.distro.supported") + `   | proot | chroot    |
 +--------- + ----- + ----------+
 | Debian   | ✓     | ✓         |
 | Ubuntu   | -     | ✓         |
 | Arch     | -     | ✓         |
 +------------------------------+
 
-说明：
-  ✓ 完美支持
-  - 仅 chroot 模式支持
+` + i18n.T("cli.distro.note") + `：
+  ✓ ` + i18n.T("cli.distro.full_support") + `
+  - ` + i18n.T("cli.distro.chroot_only") + `
   Arch 构建仅在 Arch Linux 系统有效`
 
-				cmd := exec.Command(whiptailPath, "--title", "Groot 发行版支持列表", "--msgbox", msg, "35", "60")
+				cmd := exec.Command(whiptailPath, "--title", i18n.T("cli.distro.whiptail_title"), "--msgbox", msg, "35", "60")
 				cmd.Stdin = os.Stdin
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
@@ -530,7 +543,7 @@ func main() {
 
 			if cleanupPath != "" {
 				if chrootPath != "" || prootPath != "" || prootDistro != "" {
-					return fmt.Errorf("-k 参数不能和 -c/-p/-z 同时使用")
+					return fmt.Errorf("%s", i18n.T("cli.error.k_conflict"))
 				}
 				logger.SetLevel(logger.LevelInfo)
 				return mount.CleanupMounts(cleanupPath)
@@ -538,7 +551,7 @@ func main() {
 
 			if chrootPath == "" && prootPath == "" && prootDistro == "" {
 				cli.ShowAppHelp(cCtx)
-				return fmt.Errorf("请指定 -c、-p、-z、-k 或 -l 参数，或使用子命令")
+				return fmt.Errorf("%s", i18n.T("cli.error.no_params"))
 			}
 
 			// 检查选项互斥
@@ -553,7 +566,7 @@ func main() {
 				count++
 			}
 			if count > 1 {
-				return fmt.Errorf("-c、-p、-z 只能选一个")
+				return fmt.Errorf("%s", i18n.T("cli.error.mutual_exclusive"))
 			}
 
 			if chrootPath != "" {
@@ -562,7 +575,7 @@ func main() {
 
 			if prootDistro != "" {
 				if args.Len() < 1 {
-					return fmt.Errorf("使用 -z 参数需要指定 rootfs 目录，例如：./groot -z alpine rootfs/")
+					return fmt.Errorf("%s", i18n.T("cli.error.z_needs_rootfs"))
 				}
 				rootfsPath := args.First()
 
@@ -580,7 +593,7 @@ func main() {
 					case "debian":
 						return proot.Run(rootfsPath, customShell)
 					default:
-						return fmt.Errorf("不支持的发行版：%s，当前支持 alpine 和 debian", prootDistro)
+						return fmt.Errorf("%s", i18n.Tf("cli.error.unsupported_distro", prootDistro))
 					}
 				})
 			}
@@ -590,7 +603,7 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s\n", i18n.Tf("cli.error.generic", err))
 		os.Exit(1)
 	}
 }
@@ -599,16 +612,16 @@ func runChroot(rootfsPath string, customShell string, netMode bool) error {
 	if !permission.IsRoot() {
 		// 在 Termux 环境下给出更友好的提示
 		if termux.IsTermux() {
-			return fmt.Errorf("当前设备没有 root 权限，仅支持 proot 模式（请使用 -p 参数）")
+			return fmt.Errorf("%s", i18n.T("cli.error.no_root_termux"))
 		}
-		return fmt.Errorf("-c 参数（chroot）必须以 root 身份运行，请使用 sudo 或切换到 root 用户")
+		return fmt.Errorf("%s", i18n.T("cli.error.no_root_chroot"))
 	}
 
 	// 检查 -net 参数是否与 -c 一起使用
 	if netMode {
 		supported, msg := network.CheckNetworkSupport()
 		if !supported {
-			return fmt.Errorf("网络命名空间不支持: %s", msg)
+			return fmt.Errorf("%s", i18n.Tf("cli.error.net_unsupported", msg))
 		}
 	}
 
@@ -647,7 +660,7 @@ func openURL(url string) error {
 			return cmd.Start()
 		}
 	}
-	return fmt.Errorf("未找到可用的浏览器打开工具（尝试 xdg-open、open、termux-open-url）")
+	return fmt.Errorf("%s", i18n.T("cli.browser_not_found"))
 }
 
 // downloadURLs 下载链接配置
@@ -668,30 +681,30 @@ func runDownload() error {
 
 	// 文本菜单，兼容 Termux
 	fmt.Println()
-	fmt.Println("---- 选择要下载的发行版 ----")
+	fmt.Println(i18n.T("cli.download.title"))
 	for i, name := range names {
 		fmt.Printf("  %d. %s\n", i+1, name)
 	}
-	fmt.Println("  0. 取消")
+	fmt.Println("  0. " + i18n.T("cli.download.cancel"))
 	fmt.Println("---------------------------")
-	fmt.Println("\033[36m如果没找到你想要的rootfs\033[0m\033[33m请使用\033[0m\033[32mpacstrap\033[0m、\033[35mdebootstrap\033[0m、\033[31mapkstrap\033[0m、\033[32mdnfstrap\033[0m\033[33m自行构建吧\033[0m\033[36m[QwQ]\033[0m")
-	fmt.Print("请输入数字: ")
+	fmt.Println(i18n.T("cli.download.hint"))
+	fmt.Print(i18n.T("cli.download.prompt"))
 
 	var choice int
 	_, err := fmt.Scanf("%d", &choice)
 	if err != nil || choice < 1 || choice > len(names) {
-		fmt.Println("已取消")
+		fmt.Println(i18n.T("cli.download.cancelled"))
 		return nil
 	}
 
 	selected := names[choice-1]
 	url := downloadURLs[selected]
 
-	fmt.Printf("正在打开 %s 下载页面: %s\n", selected, url)
+	fmt.Printf("%s", i18n.Tf("cli.download.opening", selected, url))
 	if err := openURL(url); err != nil {
-		fmt.Fprintf(os.Stderr, "无法自动打开浏览器，请手动访问：%s\n", url)
+		fmt.Fprintf(os.Stderr, "%s", i18n.Tf("cli.download.open_fail", url))
 		return nil
 	}
-	fmt.Println("浏览器已打开，若未弹出请检查浏览器设置")
+	fmt.Println(i18n.T("cli.download.opened"))
 	return nil
 }

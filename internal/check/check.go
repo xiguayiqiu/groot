@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"groot/internal/i18n"
 	"groot/internal/permission"
 	"groot/internal/termux"
 )
@@ -23,9 +24,10 @@ const (
 )
 
 type CheckResult struct {
-	Name    string
-	Passed  bool
-	Message string
+	Name     string
+	Passed   bool
+	Message  string
+	Critical bool // 重点要求，失败时显示 [!]
 }
 
 type DeviceInfo struct {
@@ -48,11 +50,21 @@ type DeviceInfo struct {
 func RunCheck(mode CheckMode) []CheckResult {
 	var results []CheckResult
 
+	// 捕获 panic，防止程序崩溃
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("\033[31m[ERROR] Check panicked: %v\033[0m\n", r)
+		}
+	}()
+
 	info := getDeviceInfo()
 
-	results = append(results, checkEnvironment(info)...)
+	// proot 模式不需要检查 Root 权限和用户命名空间
+	skipRoot := mode == ModeProot || (mode == ModeAll && !info.IsRoot)
+	skipUserNS := mode == ModeProot || (mode == ModeAll && !info.IsRoot)
+	results = append(results, checkEnvironment(info, skipRoot)...)
 	results = append(results, checkArch(info)...)
-	results = append(results, checkKernel(info)...)
+	results = append(results, checkKernel(info, skipUserNS)...)
 	results = append(results, checkStorage()...)
 
 	switch mode {
@@ -61,9 +73,11 @@ func RunCheck(mode CheckMode) []CheckResult {
 	case ModeChroot:
 		results = append(results, checkChrootRequirements(info)...)
 	default:
-		results = append(results, checkCommands(info)...)
-		results = append(results, checkFilesystem(info)...)
-		results = append(results, checkLibraries(info)...)
+		// 无 root 只检查 proot，有 root 检查 proot + chroot
+		results = append(results, checkProotRequirements(info)...)
+		if info.IsRoot {
+			results = append(results, checkChrootRequirements(info)...)
+		}
 	}
 
 	printResults(results, info, mode)
@@ -149,8 +163,11 @@ func getCPUInfo() string {
 }
 
 func getSelinuxStatus() string {
-	cmd := exec.Command("getenforce")
-	out, err := cmd.Output()
+	path, err := termux.SafeLookPath("getenforce")
+	if err != nil {
+		return "unknown"
+	}
+	out, err := exec.Command(path).Output()
 	if err != nil {
 		return "unknown"
 	}
@@ -220,8 +237,11 @@ func detectSystemd() bool {
 }
 
 func getUserGroups() []string {
-	cmd := exec.Command("id")
-	out, err := cmd.Output()
+	path, err := termux.SafeLookPath("id")
+	if err != nil {
+		return nil
+	}
+	out, err := exec.Command(path).Output()
 	if err != nil {
 		return nil
 	}
@@ -240,57 +260,59 @@ func getUserGroups() []string {
 	return groups
 }
 
-func checkEnvironment(info *DeviceInfo) []CheckResult {
+func checkEnvironment(info *DeviceInfo, skipRootCheck bool) []CheckResult {
 	var results []CheckResult
 
 	if info.IsTermux {
 		results = append(results, CheckResult{
-			Name:    "Termux 环境",
+			Name:    i18n.T("check.termux_env"),
 			Passed:  true,
 			Message: fmt.Sprintf("v%s", info.TermuxVer),
 		})
 	} else if info.IsContainer {
 		results = append(results, CheckResult{
-			Name:    "容器环境",
+			Name:    i18n.T("check.container_env"),
 			Passed:  true,
-			Message: "检测到容器环境",
+			Message: i18n.T("check.detected_container"),
 		})
 	} else {
 		results = append(results, CheckResult{
-			Name:    "运行环境",
+			Name:    i18n.T("check.run_env"),
 			Passed:  true,
-			Message: "标准 Linux 环境",
+			Message: i18n.T("check.standard_linux"),
 		})
 	}
 
-	if info.IsRoot {
-		results = append(results, CheckResult{
-			Name:    "Root 权限",
-			Passed:  true,
-			Message: "当前具有 root 权限",
-		})
-	} else if info.IsTermux && termux.IsRooted() {
-		results = append(results, CheckResult{
-			Name:    "Root 权限",
-			Passed:  true,
-			Message: "设备已 root（可通过 su 获取）",
-		})
-	} else {
-		results = append(results, CheckResult{
-			Name:    "Root 权限",
-			Passed:  false,
-			Message: "未检测到 root 权限",
-		})
+	if !skipRootCheck {
+		if info.IsRoot {
+			results = append(results, CheckResult{
+				Name:    i18n.T("check.root_perm"),
+				Passed:  true,
+				Message: i18n.T("check.has_root"),
+			})
+		} else if info.IsTermux && termux.IsRooted() {
+			results = append(results, CheckResult{
+				Name:    i18n.T("check.root_perm"),
+				Passed:  true,
+				Message: i18n.T("check.device_rooted"),
+			})
+		} else {
+			results = append(results, CheckResult{
+				Name:    i18n.T("check.root_perm"),
+				Passed:  false,
+				Message: i18n.T("check.no_root"),
+			})
+		}
 	}
 
 	if info.IsTermux {
 		results = append(results, CheckResult{
-			Name:    "Android 版本",
+			Name:    i18n.T("check.android_ver"),
 			Passed:  true,
 			Message: info.AndroidVer,
 		})
 		results = append(results, CheckResult{
-			Name:    "设备型号",
+			Name:    i18n.T("check.device_model"),
 			Passed:  true,
 			Message: info.Model,
 		})
@@ -298,9 +320,9 @@ func checkEnvironment(info *DeviceInfo) []CheckResult {
 
 	if len(info.UserGroups) > 0 {
 		results = append(results, CheckResult{
-			Name:    "用户组",
+			Name:    i18n.T("check.user_groups"),
 			Passed:  true,
-			Message: fmt.Sprintf("%d 个组", len(info.UserGroups)),
+			Message: fmt.Sprintf("%s: %d", i18n.T("check.group_count"), len(info.UserGroups)),
 		})
 	}
 
@@ -323,7 +345,7 @@ func checkArch(info *DeviceInfo) []CheckResult {
 	}
 
 	results = append(results, CheckResult{
-		Name:    "CPU 架构",
+		Name:    i18n.T("check.cpu_arch"),
 		Passed:  isSupported,
 		Message: fmt.Sprintf("%s (%s)", archName, archDesc),
 	})
@@ -331,7 +353,7 @@ func checkArch(info *DeviceInfo) []CheckResult {
 	if runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64" {
 		compat32 := check32BitCompat()
 		results = append(results, CheckResult{
-			Name:    "32位兼容",
+			Name:    i18n.T("check.arch_32bit_compat"),
 			Passed:  compat32,
 			Message: get32BitCompatMessage(),
 		})
@@ -339,7 +361,7 @@ func checkArch(info *DeviceInfo) []CheckResult {
 
 	if runtime.GOARCH == "arm" || runtime.GOARCH == "arm64" {
 		results = append(results, CheckResult{
-			Name:    "CPU 信息",
+			Name:    i18n.T("check.cpu_info"),
 			Passed:  true,
 			Message: truncateString(info.CPUInfo, 50),
 		})
@@ -374,39 +396,39 @@ func check32BitCompat() bool {
 
 func get32BitCompatMessage() string {
 	if runtime.GOARCH == "386" || runtime.GOARCH == "arm" {
-		return "原生 32 位架构"
+		return i18n.T("check.native_32bit")
 	}
 
 	arch := runtime.GOARCH
 	if arch == "amd64" {
 		if _, err := os.Stat("/lib32"); err == nil {
-			return "支持 (有 /lib32)"
+			return i18n.T("check.has_lib32")
 		}
 		if _, err := os.Stat("/usr/lib32"); err == nil {
-			return "支持 (有 /usr/lib32)"
+			return i18n.T("check.has_usrlib32")
 		}
 	}
 
 	if arch == "arm64" {
 		if _, err := os.Stat("/usr/lib32"); err == nil {
-			return "支持 (有 /usr/lib32)"
+			return i18n.T("check.has_usrlib32")
 		}
 	}
 
-	return "未检测到 32 位兼容层"
+	return i18n.T("check.no_32bit_compat")
 }
 
-func checkKernel(info *DeviceInfo) []CheckResult {
+func checkKernel(info *DeviceInfo, skipUserNS bool) []CheckResult {
 	var results []CheckResult
 
 	results = append(results, CheckResult{
-		Name:    "系统架构",
+		Name:    i18n.T("check.sys_arch"),
 		Passed:  true,
 		Message: fmt.Sprintf("%s (%s)", runtime.GOOS, info.Arch),
 	})
 
 	results = append(results, CheckResult{
-		Name:    "内核版本",
+		Name:    i18n.T("check.kernel_ver"),
 		Passed:  true,
 		Message: truncateString(info.KernelVer, 60),
 	})
@@ -414,18 +436,20 @@ func checkKernel(info *DeviceInfo) []CheckResult {
 	if info.Selinux != "unknown" {
 		passed := info.Selinux == "Disabled" || info.Selinux == "Permissive"
 		results = append(results, CheckResult{
-			Name:    "SELinux 状态",
+			Name:    i18n.T("check.selinux"),
 			Passed:  passed,
 			Message: info.Selinux,
 		})
 	}
 
-	if userns := checkUserNamespace(); userns != "" {
-		results = append(results, CheckResult{
-			Name:    "用户命名空间",
-			Passed:  true,
-			Message: userns,
-		})
+	if !skipUserNS {
+		if userns := checkUserNamespace(); userns != "" {
+			results = append(results, CheckResult{
+				Name:    i18n.T("check.user_ns"),
+				Passed:  true,
+				Message: userns,
+			})
+		}
 	}
 
 	results = append(results, checkKernelConfig()...)
@@ -435,7 +459,7 @@ func checkKernel(info *DeviceInfo) []CheckResult {
 
 func checkUserNamespace() string {
 	if permission.HasUnprivilegedUserns() {
-		return "支持非特权用户命名空间"
+		return i18n.T("check.unpriv_ns_support")
 	}
 
 	data, err := os.ReadFile("/proc/sys/user/max_user_namespaces")
@@ -465,16 +489,16 @@ func checkKernelConfig() []CheckResult {
 	content := string(data)
 
 	features := map[string]string{
-		"CONFIG_NAMESPACES=y":     "命名空间支持",
-		"CONFIG_USER_NS=y":        "用户命名空间",
-		"CONFIG_PID_NS=y":         "PID 命名空间",
-		"CONFIG_NET_NS=y":         "网络命名空间",
-		"CONFIG_UTS_NS=y":         "UTS 命名空间",
-		"CONFIG_IPC_NS=y":         "IPC 命名空间",
-		"CONFIG_CGROUPS=y":        "cgroup 支持",
+		"CONFIG_NAMESPACES=y":     i18n.T("check.ns_support"),
+		"CONFIG_USER_NS=y":        i18n.T("check.user_ns"),
+		"CONFIG_PID_NS=y":         i18n.T("check.pid_ns"),
+		"CONFIG_NET_NS=y":         i18n.T("check.net_ns"),
+		"CONFIG_UTS_NS=y":         i18n.T("check.uts_ns"),
+		"CONFIG_IPC_NS=y":         i18n.T("check.ipc_ns"),
+		"CONFIG_CGROUPS=y":        i18n.T("check.cgroup"),
 		"CONFIG_OVERLAY_FS=y":     "OverlayFS",
-		"CONFIG_VETH=y":           "虚拟以太网设备",
-		"CONFIG_BRIDGE=y":         "网桥支持",
+		"CONFIG_VETH=y":           i18n.T("check.veth"),
+		"CONFIG_BRIDGE=y":         i18n.T("check.bridge"),
 		"CONFIG_MACVLAN=y":        "MACVLAN",
 		"CONFIG_VXLAN=y":          "VXLAN",
 	}
@@ -484,7 +508,7 @@ func checkKernelConfig() []CheckResult {
 			results = append(results, CheckResult{
 				Name:    desc,
 				Passed:  true,
-				Message: "已启用",
+				Message: i18n.T("check.enabled"),
 			})
 		}
 	}
@@ -502,22 +526,22 @@ func checkStorage() []CheckResult {
 		passed := freeGB >= 1.0
 
 		results = append(results, CheckResult{
-			Name:    "存储空间",
+			Name:    i18n.T("check.storage"),
 			Passed:  passed,
-			Message: fmt.Sprintf("可用 %.2f GB / 总计 %.2f GB", freeGB, totalGB),
+			Message: i18n.Tf("check.storage_msg", freeGB, totalGB),
 		})
 	} else {
 		results = append(results, CheckResult{
-			Name:    "存储空间",
+			Name:    i18n.T("check.storage"),
 			Passed:  false,
-			Message: "无法获取存储信息",
+			Message: i18n.T("check.storage_fail"),
 		})
 	}
 
 	if info, err := os.Stat("/data/data/com.termux/files"); err == nil {
 		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
 			results = append(results, CheckResult{
-				Name:    "Termux 数据目录",
+				Name:    i18n.T("check.termux_data"),
 				Passed:  true,
 				Message: fmt.Sprintf("UID: %d, GID: %d", stat.Uid, stat.Gid),
 			})
@@ -532,19 +556,20 @@ func checkProotRequirements(info *DeviceInfo) []CheckResult {
 
 	if path, err := termux.SafeLookPath("proot"); err == nil {
 		results = append(results, CheckResult{
-			Name:    "proot",
-			Passed:  true,
-			Message: fmt.Sprintf("%s", path),
+			Name:     "proot",
+			Passed:   true,
+			Message:  fmt.Sprintf("%s", path),
+			Critical: true,
 		})
 	} else {
 		results = append(results, CheckResult{
-			Name:    "proot",
-			Passed:  false,
-			Message: "未安装 proot",
+			Name:     "proot",
+			Passed:   false,
+			Message:  i18n.T("check.no_proot"),
+			Critical: true,
 		})
 	}
 
-	results = append(results, checkProotKernelSupport()...)
 	results = append(results, checkProotSyscall()...)
 
 	return results
@@ -556,15 +581,17 @@ func checkProotKernelSupport() []CheckResult {
 	userns := checkUserNamespace()
 	if userns != "" {
 		results = append(results, CheckResult{
-			Name:    "用户命名空间",
-			Passed:  true,
-			Message: userns,
+			Name:     i18n.T("check.user_ns"),
+			Passed:   true,
+			Message:  userns,
+			Critical: true,
 		})
 	} else {
 		results = append(results, CheckResult{
-			Name:    "用户命名空间",
-			Passed:  false,
-			Message: "proot 需要用户命名空间支持",
+			Name:     i18n.T("check.user_ns"),
+			Passed:   false,
+			Message:  i18n.T("check.proot_ns"),
+			Critical: true,
 		})
 	}
 
@@ -576,17 +603,17 @@ func checkProotKernelSupport() []CheckResult {
 
 			if strings.Contains(content, "CONFIG_SYSCTL=y") {
 				results = append(results, CheckResult{
-					Name:    "sysctl 支持",
+					Name:    i18n.T("check.sysctl"),
 					Passed:  true,
-					Message: "已启用",
+					Message: i18n.T("check.enabled"),
 				})
 			}
 
 			if strings.Contains(content, "CONFIG_SECCOMP=y") {
 				results = append(results, CheckResult{
-					Name:    "Seccomp 支持",
+					Name:    i18n.T("check.seccomp"),
 					Passed:  true,
-					Message: "已启用",
+					Message: i18n.T("check.enabled"),
 				})
 			}
 		}
@@ -604,17 +631,17 @@ func checkProotSyscall() []CheckResult {
 		os.Remove(testFile)
 
 		results = append(results, CheckResult{
-			Name:    "文件系统访问",
+			Name:    i18n.T("check.fs_access"),
 			Passed:  true,
-			Message: "可以访问 /tmp",
+			Message: i18n.T("check.tmp_ok"),
 		})
 	}
 
 	if _, err := os.Stat("/proc/self/exe"); err == nil {
 		results = append(results, CheckResult{
-			Name:    "proc 文件系统",
+			Name:    i18n.T("check.proc_fs"),
 			Passed:  true,
-			Message: "可以访问 /proc",
+			Message: i18n.T("check.proc_ok"),
 		})
 	}
 
@@ -626,29 +653,33 @@ func checkChrootRequirements(info *DeviceInfo) []CheckResult {
 
 	if info.IsRoot {
 		results = append(results, CheckResult{
-			Name:    "Root 权限",
-			Passed:  true,
-			Message: "当前具有 root 权限",
+			Name:     i18n.T("check.root_perm"),
+			Passed:   true,
+			Message:  i18n.T("check.has_root"),
+			Critical: true,
 		})
 	} else {
 		results = append(results, CheckResult{
-			Name:    "Root 权限",
-			Passed:  false,
-			Message: "chroot 需要 root 权限",
+			Name:     i18n.T("check.root_perm"),
+			Passed:   false,
+			Message:  i18n.T("check.chroot_needs_root"),
+			Critical: true,
 		})
 	}
 
 	if path, err := termux.SafeLookPath("chroot"); err == nil {
 		results = append(results, CheckResult{
-			Name:    "chroot",
-			Passed:  true,
-			Message: fmt.Sprintf("%s", path),
+			Name:     "chroot",
+			Passed:   true,
+			Message:  fmt.Sprintf("%s", path),
+			Critical: true,
 		})
 	} else {
 		results = append(results, CheckResult{
-			Name:    "chroot",
-			Passed:  false,
-			Message: "未找到 chroot 命令",
+			Name:     "chroot",
+			Passed:   false,
+			Message:  i18n.T("check.chroot_cmd"),
+			Critical: true,
 		})
 	}
 
@@ -680,15 +711,15 @@ func checkChrootMountSupport() []CheckResult {
 
 	if loopSupport {
 		results = append(results, CheckResult{
-			Name:    "Loop 设备",
+			Name:    i18n.T("check.loop_device"),
 			Passed:  true,
-			Message: "支持 loop 设备",
+			Message: i18n.T("check.loop_ok"),
 		})
 	} else {
 		results = append(results, CheckResult{
-			Name:    "Loop 设备",
+			Name:    i18n.T("check.loop_device"),
 			Passed:  false,
-			Message: "未检测到 loop 设备支持",
+			Message: i18n.T("check.loop_fail"),
 		})
 	}
 
@@ -706,13 +737,13 @@ func checkChrootMountSupport() []CheckResult {
 		results = append(results, CheckResult{
 			Name:    "Bind Mount",
 			Passed:  true,
-			Message: "支持 bind mount",
+			Message: i18n.T("check.bind_mount"),
 		})
 	} else {
 		results = append(results, CheckResult{
 			Name:    "Bind Mount",
 			Passed:  false,
-			Message: "未检测到 bind mount 支持",
+			Message: i18n.T("check.bind_mount_fail"),
 		})
 	}
 
@@ -723,15 +754,15 @@ func checkChrootMountSupport() []CheckResult {
 
 	if procMount {
 		results = append(results, CheckResult{
-			Name:    "proc 挂载",
+			Name:    i18n.T("check.proc_mount"),
 			Passed:  true,
-			Message: "/proc 可用",
+			Message: i18n.T("check.proc_mount_ok"),
 		})
 	} else {
 		results = append(results, CheckResult{
-			Name:    "proc 挂载",
+			Name:    i18n.T("check.proc_mount"),
 			Passed:  false,
-			Message: "/proc 不可用",
+			Message: i18n.T("check.proc_mount_fail"),
 		})
 	}
 
@@ -758,15 +789,15 @@ func checkChrootDeviceNodes() []CheckResult {
 
 	if found == len(devNodes) {
 		results = append(results, CheckResult{
-			Name:    "设备节点",
+			Name:    i18n.T("check.dev_nodes"),
 			Passed:  true,
-			Message: fmt.Sprintf("找到 %d/%d 个必要设备", found, len(devNodes)),
+			Message: i18n.Tf("check.dev_nodes_found", found, len(devNodes)),
 		})
 	} else {
 		results = append(results, CheckResult{
-			Name:    "设备节点",
+			Name:    i18n.T("check.dev_nodes"),
 			Passed:  false,
-			Message: fmt.Sprintf("仅找到 %d/%d 个必要设备", found, len(devNodes)),
+			Message: i18n.Tf("check.dev_nodes_partial", found, len(devNodes)),
 		})
 	}
 
@@ -776,27 +807,33 @@ func checkChrootDeviceNodes() []CheckResult {
 func checkCommands(info *DeviceInfo) []CheckResult {
 	var results []CheckResult
 
-	essentialCmds := map[string]string{
-		"tar":   "用于解压 rootfs",
-		"wget":  "用于下载 rootfs 镜像",
-		"curl":  "用于下载 rootfs 镜像",
-		"proot": "用于非 root 模式运行",
-		"chroot": "用于 root 模式运行",
+	type cmdInfo struct {
+		desc     string
+		critical bool
+	}
+	essentialCmds := map[string]cmdInfo{
+		"tar":    {desc: i18n.T("check.desc_tar")},
+		"wget":   {desc: i18n.T("check.desc_wget")},
+		"curl":   {desc: i18n.T("check.desc_curl")},
+		"proot":  {desc: i18n.T("check.desc_proot"), critical: true},
+		"chroot": {desc: i18n.T("check.desc_chroot"), critical: true},
 	}
 
-	for cmd, desc := range essentialCmds {
+	for cmd, info := range essentialCmds {
 		if path, err := termux.SafeLookPath(cmd); err == nil {
 			results = append(results, CheckResult{
-				Name:    cmd,
-				Passed:  true,
-				Message: fmt.Sprintf("%s (%s)", path, desc),
+				Name:     cmd,
+				Passed:   true,
+				Message:  fmt.Sprintf("%s (%s)", path, info.desc),
+				Critical: info.critical,
 			})
 		} else {
 			optional := cmd == "wget" || cmd == "curl"
 			results = append(results, CheckResult{
-				Name:    cmd,
-				Passed:  optional,
-				Message: desc,
+				Name:     cmd,
+				Passed:   optional,
+				Message:  info.desc,
+				Critical: info.critical,
 			})
 		}
 	}
@@ -808,7 +845,7 @@ func checkCommands(info *DeviceInfo) []CheckResult {
 				results = append(results, CheckResult{
 					Name:    cmd,
 					Passed:  true,
-					Message: fmt.Sprintf("%s (包管理器)", path),
+					Message: fmt.Sprintf("%s (%s)", path, i18n.T("check.pkg_manager")),
 				})
 				break
 			}
@@ -822,7 +859,7 @@ func checkCommands(info *DeviceInfo) []CheckResult {
 					results = append(results, CheckResult{
 						Name:    cmd,
 						Passed:  true,
-						Message: fmt.Sprintf("%s (包管理器)", path),
+						Message: fmt.Sprintf("%s (%s)", path, i18n.T("check.pkg_manager")),
 					})
 					found = true
 				}
@@ -855,17 +892,17 @@ func checkFilesystem(info *DeviceInfo) []CheckResult {
 
 	if loopSupport {
 		results = append(results, CheckResult{
-			Name:    "Loop 设备",
+			Name:    i18n.T("check.loop_device"),
 			Passed:  true,
-			Message: "支持 loop 设备",
+			Message: i18n.T("check.loop_ok"),
 		})
 	} else {
-		msg := "未检测到 loop 设备支持"
+		msg := i18n.T("check.loop_fail")
 		if !permission.IsRoot() && !info.IsTermux {
-			msg = "需要 root 权限检测"
+			msg = i18n.T("check.need_root")
 		}
 		results = append(results, CheckResult{
-			Name:    "Loop 设备",
+			Name:    i18n.T("check.loop_device"),
 			Passed:  false,
 			Message: msg,
 		})
@@ -883,13 +920,13 @@ func checkFilesystem(info *DeviceInfo) []CheckResult {
 		results = append(results, CheckResult{
 			Name:    "OverlayFS",
 			Passed:  true,
-			Message: "支持 OverlayFS",
+			Message: i18n.T("check.overlay"),
 		})
 	} else {
 		results = append(results, CheckResult{
 			Name:    "OverlayFS",
 			Passed:  false,
-			Message: "未检测到 OverlayFS 支持",
+			Message: i18n.T("check.overlay_fail"),
 		})
 	}
 
@@ -907,13 +944,13 @@ func checkFilesystem(info *DeviceInfo) []CheckResult {
 		results = append(results, CheckResult{
 			Name:    "Bind Mount",
 			Passed:  true,
-			Message: "支持 bind mount",
+			Message: i18n.T("check.bind_mount"),
 		})
 	} else {
 		results = append(results, CheckResult{
 			Name:    "Bind Mount",
 			Passed:  false,
-			Message: "未检测到 bind mount 支持",
+			Message: i18n.T("check.bind_mount_fail"),
 		})
 	}
 
@@ -932,9 +969,9 @@ func checkFilesystem(info *DeviceInfo) []CheckResult {
 				f.Close()
 				os.Remove(testFile)
 				results = append(results, CheckResult{
-					Name:    "临时目录",
+					Name:    i18n.T("check.tmp_dir"),
 					Passed:  true,
-					Message: fmt.Sprintf("%s (可写)", tmpDir),
+					Message: fmt.Sprintf("%s (%s)", tmpDir, i18n.T("check.writable")),
 				})
 			}
 		}
@@ -985,15 +1022,15 @@ func checkLibraries(info *DeviceInfo) []CheckResult {
 
 	if len(foundLibs) > 0 {
 		results = append(results, CheckResult{
-			Name:    "系统库",
+			Name:    i18n.T("check.sys_libs"),
 			Passed:  true,
-			Message: fmt.Sprintf("找到 %d 个", len(foundLibs)),
+			Message: i18n.Tf("check.sys_libs_found", len(foundLibs)),
 		})
 	} else {
 		results = append(results, CheckResult{
-			Name:    "系统库",
+			Name:    i18n.T("check.sys_libs"),
 			Passed:  false,
-			Message: "未找到必要的系统库",
+			Message: i18n.T("check.sys_libs_missing"),
 		})
 	}
 
@@ -1006,30 +1043,34 @@ func printResults(results []CheckResult, info *DeviceInfo, mode CheckMode) {
 
 	switch mode {
 	case ModeProot:
-		fmt.Println("    Proot 环境检查报告")
+		fmt.Println("    " + i18n.T("check.proot_report"))
 	case ModeChroot:
-		fmt.Println("    Chroot 环境检查报告")
+		fmt.Println("    " + i18n.T("check.chroot_report"))
 	default:
-		fmt.Println("    Groot 设备检查报告")
+		if info.IsRoot {
+			fmt.Println("    " + i18n.T("check.full_report"))
+		} else {
+			fmt.Println("    " + i18n.T("check.proot_report"))
+		}
 	}
 
 	fmt.Println("====================================")
 	fmt.Println()
 
 	if info.IsTermux {
-		fmt.Printf("  设备: %s\n", info.Model)
-		fmt.Printf("  系统: Android %s\n", info.AndroidVer)
-		fmt.Printf("  环境: Termux v%s\n", info.TermuxVer)
+		fmt.Printf("  %s: %s\n", i18n.T("check.device"), info.Model)
+		fmt.Printf("  %s: Android %s\n", i18n.T("check.system"), info.AndroidVer)
+		fmt.Printf("  %s: Termux v%s\n", i18n.T("check.environment"), info.TermuxVer)
 	} else if info.IsContainer {
-		fmt.Printf("  环境: 容器\n")
-		fmt.Printf("  系统: %s\n", truncateString(info.KernelVer, 50))
+		fmt.Printf("  %s: %s\n", i18n.T("check.environment"), i18n.T("check.container"))
+		fmt.Printf("  %s: %s\n", i18n.T("check.system"), truncateString(info.KernelVer, 50))
 	} else {
-		fmt.Printf("  系统: %s\n", truncateString(info.KernelVer, 50))
+		fmt.Printf("  %s: %s\n", i18n.T("check.system"), truncateString(info.KernelVer, 50))
 	}
-	fmt.Printf("  架构: %s (%s)\n", info.Arch, info.ArchCompat)
+	fmt.Printf("  %s: %s (%s)\n", i18n.T("check.arch"), info.Arch, info.ArchCompat)
 	fmt.Printf("  CPU:  %s\n", truncateString(info.CPUInfo, 50))
 	fmt.Println()
-	fmt.Println("  检查项目:")
+	fmt.Printf("  %s:\n", i18n.T("check.items"))
 	fmt.Println("  ----------------------------------------")
 
 	passed := 0
@@ -1045,33 +1086,37 @@ func printResults(results []CheckResult, info *DeviceInfo, mode CheckMode) {
 			failed++
 		}
 
-		fmt.Printf("    %s %s\n", status, r.Name)
+		if r.Critical {
+			fmt.Printf("    \033[33m!\033[0m%s %s\n", status, r.Name)
+		} else {
+			fmt.Printf("    %s %s\n", status, r.Name)
+		}
 	}
 
 	fmt.Println()
 	fmt.Println("  ----------------------------------------")
 
 	if failed == 0 {
-		fmt.Printf("\033[32m  ✓ 所有检查通过 (%d/%d)\033[0m\n", passed, len(results))
+		fmt.Printf("\033[32m  ✓ %s (%d/%d)\033[0m\n", i18n.T("check.all_pass"), passed, len(results))
 
 		switch mode {
 		case ModeProot:
-			fmt.Println("\n  您的设备完全支持 proot 模式！")
+			fmt.Printf("\n  %s\n", i18n.T("check.proot_supported"))
 		case ModeChroot:
-			fmt.Println("\n  您的设备完全支持 chroot 模式！")
+			fmt.Printf("\n  %s\n", i18n.T("check.chroot_supported"))
 		default:
-			fmt.Println("\n  您的设备完全支持创建 Linux Rootfs 文件系统！")
+			fmt.Printf("\n  %s\n", i18n.T("check.full_support_msg"))
 		}
 	} else {
-		fmt.Printf("\033[33m  ✓ 通过: %d  ✗ 失败: %d\033[0m\n", passed, failed)
+		fmt.Printf("\033[33m  ✓ %s: %d  ✗ %s: %d\033[0m\n", i18n.T("check.pass"), passed, i18n.T("check.fail"), failed)
 
 		switch mode {
 		case ModeProot:
-			fmt.Println("\n  proot 模式可能受限，建议检查失败项。")
+			fmt.Printf("\n  %s\n", i18n.T("check.proot_limited_hint"))
 		case ModeChroot:
-			fmt.Println("\n  chroot 模式可能受限，建议检查失败项。")
+			fmt.Printf("\n  %s\n", i18n.T("check.chroot_limited_hint"))
 		default:
-			fmt.Println("\n  部分功能可能受限，建议使用 proot 模式。")
+			fmt.Printf("\n  %s\n", i18n.T("check.partial_limited_hint"))
 		}
 	}
 
@@ -1079,21 +1124,24 @@ func printResults(results []CheckResult, info *DeviceInfo, mode CheckMode) {
 
 	switch mode {
 	case ModeProot:
-		fmt.Println("  提示：")
+		fmt.Printf("  %s\n", i18n.T("check.hint"))
 		fmt.Println("    - 使用 ./groot --check proot 检查 proot 环境")
 		fmt.Println("    - 使用 ./groot -p <rootfs> 进入 proot 模式")
 	case ModeChroot:
-		fmt.Println("  提示：")
+		fmt.Printf("  %s\n", i18n.T("check.hint"))
 		fmt.Println("    - 使用 ./groot --check chroot 检查 chroot 环境")
 		fmt.Println("    - 使用 ./groot -c <rootfs> 进入 chroot 模式")
 	default:
-		fmt.Println("  提示：")
-		fmt.Println("    - proot 模式无需 root 权限")
-		fmt.Println("    - chroot 模式需要 root 权限")
-		fmt.Println("    - 使用 ./groot --check proot 检查 proot 环境")
-		fmt.Println("    - 使用 ./groot --check chroot 检查 chroot 环境")
-		fmt.Println("    - 使用 ./groot -p <rootfs> 进入 proot 模式")
-		fmt.Println("    - 使用 ./groot -c <rootfs> 进入 chroot 模式")
+		fmt.Printf("  %s\n", i18n.T("check.hint"))
+		if info.IsRoot {
+			fmt.Println("    - 使用 ./groot --check proot 检查 proot 环境")
+			fmt.Println("    - 使用 ./groot --check chroot 检查 chroot 环境")
+			fmt.Println("    - 使用 ./groot -p <rootfs> 进入 proot 模式")
+			fmt.Println("    - 使用 ./groot -c <rootfs> 进入 chroot 模式")
+		} else {
+			fmt.Println("    - 使用 ./groot --check proot 检查 proot 环境")
+			fmt.Println("    - 使用 ./groot -p <rootfs> 进入 proot 模式")
+		}
 	}
 
 	fmt.Println()

@@ -106,7 +106,12 @@ func DetectDistro() string {
 
 // GetExecutablePath 获取当前可执行文件的绝对路径
 func GetExecutablePath() string {
-	// 优先尝试 os.Args[0]
+	// 优先使用 /proc/self/exe，最可靠
+	if exePath, err := os.Readlink("/proc/self/exe"); err == nil {
+		return exePath
+	}
+
+	// 尝试 os.Args[0]
 	if filepath.IsAbs(os.Args[0]) {
 		if _, err := os.Stat(os.Args[0]); err == nil {
 			return os.Args[0]
@@ -119,11 +124,6 @@ func GetExecutablePath() string {
 			return absPath
 		}
 		return path
-	}
-
-	// 尝试 /proc/self/exe
-	if exePath, err := os.Readlink("/proc/self/exe"); err == nil {
-		return exePath
 	}
 
 	// 最后，返回 os.Args[0] 作为备用

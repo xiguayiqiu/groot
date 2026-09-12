@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"groot/internal/i18n"
 	"groot/internal/permission"
 	"groot/internal/termux"
 )
@@ -200,7 +201,7 @@ func buildDebootstrap(config BuildConfig) error {
 
 	cmd, err := termux.Command("debootstrap", args...)
 	if err != nil {
-		return fmt.Errorf("debootstrap 未找到: %v", err)
+		return fmt.Errorf("%s", i18n.Tf("make.debootstrap_not_found", err))
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -242,7 +243,7 @@ func buildDebootstrap(config BuildConfig) error {
 		}, extraPackages...)
 		installCmd, err := termux.Command("bash", "-c", strings.Join(installArgs, " "))
 		if err != nil {
-			return fmt.Errorf("bash 未找到: %v", err)
+			return fmt.Errorf("%s", i18n.Tf("make.bash_not_found", err))
 		}
 		installCmd.Stdout = os.Stdout
 		installCmd.Stderr = os.Stderr
@@ -327,7 +328,7 @@ Include = %s/mirrorlist
 
 	cmd, err := termux.Command("pacstrap", args...)
 	if err != nil {
-		return fmt.Errorf("pacstrap 未找到: %v", err)
+		return fmt.Errorf("%s", i18n.Tf("make.pacstrap_not_found", err))
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -435,7 +436,7 @@ func installWithApt(tool string) error {
 	fmt.Printf("Installing %s using apt...\n", pkgName)
 	cmd, err := termux.Command("apt", "install", "-y", pkgName)
 	if err != nil {
-		return fmt.Errorf("apt 未找到: %v", err)
+		return fmt.Errorf("%s", i18n.Tf("make.apt_not_found", err))
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -469,7 +470,7 @@ func installWithPacman(tool string) error {
 	fmt.Printf("Installing %s using pacman...\n", pkgName)
 	cmd, err := termux.Command("pacman", "-S", "--noconfirm", pkgName)
 	if err != nil {
-		return fmt.Errorf("pacman 未找到: %v", err)
+		return fmt.Errorf("%s", i18n.Tf("make.pacman_not_found", err))
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -496,9 +497,9 @@ func InteractiveMakeRootfs(destDir string) error {
 		return interactiveMakeRootfsWhiptail(destDir)
 	}
 	// 如果 whiptail 没有找到，先尝试安装
-	fmt.Println("提示: whiptail 没有找到，尝试安装它以获得更好的交互体验...")
+	fmt.Println(i18n.T("make.whiptail_not_found"))
 	distro := detectDistro()
-	fmt.Printf("检测到当前系统是: %s\n", distro)
+	fmt.Printf("%s\n", i18n.Tf("make.detect_distro", distro))
 	switch distro {
 	case "alpine":
 		if _, err := termux.SafeLookPath("apk"); err == nil {
@@ -516,7 +517,7 @@ func InteractiveMakeRootfs(destDir string) error {
 		}
 	case "void":
 		if _, err := termux.SafeLookPath("xbps-install"); err == nil {
-			fmt.Println("找到 xbps-install，正在安装 newt 包...")
+			fmt.Println(i18n.T("make.xbps_installing"))
 			cmd, err := termux.Command("xbps-install", "-Sy", "newt")
 			if err != nil {
 				break
@@ -525,22 +526,22 @@ func InteractiveMakeRootfs(destDir string) error {
 			cmd.Stderr = os.Stderr
 			cmd.Stdin = os.Stdin
 			if err := cmd.Run(); err != nil {
-				fmt.Printf("安装 newt 失败: %v\n", err)
+				fmt.Printf("%s\n", i18n.Tf("make.newt_install_fail", err))
 			} else {
-				fmt.Println("安装 newt 成功，检查 whiptail 是否存在...")
+				fmt.Println(i18n.T("make.newt_installed_check"))
 				if _, err := termux.SafeLookPath("whiptail"); err == nil {
-					fmt.Println("找到 whiptail，启动交互式菜单...")
+					fmt.Println(i18n.T("make.whiptail_found"))
 					return interactiveMakeRootfsWhiptail(destDir)
 				} else {
-					fmt.Printf("whiptail 仍然未找到: %v\n", err)
+					fmt.Printf("%s\n", i18n.Tf("make.whiptail_still_missing", err))
 				}
 			}
 		} else {
-			fmt.Printf("未找到 xbps-install: %v\n", err)
+			fmt.Printf("%s\n", i18n.Tf("make.xbps_not_found", err))
 		}
 	}
 	// 如果安装失败或者其他发行版，回退到文本模式
-	fmt.Println("将使用文本交互模式")
+	fmt.Println(i18n.T("make.text_mode"))
 	return interactiveMakeRootfsSimple(destDir)
 }
 

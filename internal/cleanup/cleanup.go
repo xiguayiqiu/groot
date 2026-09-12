@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"groot/internal/i18n"
 	"groot/internal/logger"
 )
 
@@ -31,26 +32,26 @@ func CleanupRootfs(rootfsPath string, hostname string) error {
 	if hostname == "" {
 		hostname = DefaultHostname
 	}
-	logger.Info("正在清理 rootfs 中的宿主机环境: %s", rootfsPath)
+	logger.Info(i18n.Tf("cleanup.cleaning", rootfsPath))
 
 	// 1. 清理 /etc/hosts 中的宿主机条目，保留 rootfs 自己的本地回环条目
 	if err := cleanEtcHosts(filepath.Join(rootfsPath, "etc", "hosts")); err != nil {
-		logger.Warn("清理 /etc/hosts 失败: %v", err)
+		logger.Warn(i18n.T("cleanup.hosts_fail"))
 	}
 
 	// 2. 处理 /etc/resolv.conf：移除宿主机私有 DNS，保留 rootfs 自己的公共 DNS
 	if err := cleanEtcResolvConf(filepath.Join(rootfsPath, "etc", "resolv.conf")); err != nil {
-		logger.Warn("清理 /etc/resolv.conf 失败: %v", err)
+		logger.Warn("%s", i18n.Tf("cleanup.resolv_conf_fail", err))
 	}
 
 	// 3. 处理 /etc/hostname：保留 rootfs 自己的，仅在缺失时补充
 	if err := ensureHostname(filepath.Join(rootfsPath, "etc", "hostname"), hostname); err != nil {
-		logger.Warn("处理 /etc/hostname 失败: %v", err)
+		logger.Warn("%s", i18n.Tf("cleanup.hostname_fail", err))
 	}
 
 	// 4. 清空 /etc/machine-id（避免与宿主机冲突）
 	if err := writeIfDir(filepath.Join(rootfsPath, "etc", "machine-id"), ""); err != nil {
-		logger.Warn("清理 /etc/machine-id 失败: %v", err)
+		logger.Warn("%s", i18n.Tf("cleanup.machine_id_fail", err))
 	}
 
 	// 5. 清理 shell 历史文件
@@ -65,7 +66,7 @@ func CleanupRootfs(rootfsPath string, hostname string) error {
 	// 8. 清理 /tmp 下残留临时文件
 	cleanTmpDir(rootfsPath)
 
-	logger.Info("宿主机环境清理完成")
+	logger.Info(i18n.T("cleanup.done"))
 	return nil
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"groot/internal/cleanup"
 	"groot/internal/env"
+	"groot/internal/i18n"
 	"groot/internal/logger"
 	"groot/internal/mount"
 	"groot/internal/network"
@@ -24,10 +25,10 @@ func Run(rootfsPath string, customShell string, netMode bool) error {
 	// 转换为绝对路径
 	absRootfsPath, err := filepath.Abs(rootfsPath)
 	if err != nil {
-		return fmt.Errorf("转换绝对路径失败: %w", err)
+		return fmt.Errorf("%s", i18n.Tf("chroot.path_fail", err))
 	}
 
-	logger.Info("开始 chroot 模式，rootfs 路径: %s", absRootfsPath)
+	logger.Info(i18n.Tf("chroot.start", absRootfsPath))
 
 	// 验证 rootfs
 	if err := mount.ValidateRootfs(absRootfsPath, customShell); err != nil {
@@ -37,15 +38,15 @@ func Run(rootfsPath string, customShell string, netMode bool) error {
 	// 在主机端提前清理 rootfs 中的宿主机环境痕迹
 	preHostname := env.GetHostname(absRootfsPath, cleanup.DefaultHostname)
 	if err := cleanup.CleanupRootfs(absRootfsPath, preHostname); err != nil {
-		logger.Warn("清理 rootfs 环境失败: %v", err)
+		logger.Warn(i18n.Tf("chroot.cleanup_warn", err))
 	}
 
 	// 检查权限
 	isRoot := permission.IsRoot()
 	if isRoot {
-		logger.Info("以真实 root 权限运行")
+		logger.Info(i18n.T("chroot.running_as_root"))
 	} else {
-		logger.Info("以普通用户运行，使用 User Namespace 隔离")
+		logger.Info(i18n.T("chroot.running_user_ns"))
 	}
 
 	// 默认使用 root 用户
@@ -55,7 +56,7 @@ func Run(rootfsPath string, customShell string, netMode bool) error {
 	}
 
 	// 在主进程修复权限
-	logger.Info("正在修复权限...")
+	logger.Info(i18n.T("chroot.fixing_perms"))
 	usercheck.FixCommonIssues(absRootfsPath, userInfo)
 
 	// 准备用户主目录
@@ -69,7 +70,7 @@ func Run(rootfsPath string, customShell string, netMode bool) error {
 
 	// 使用可执行文件路径
 	exePath := permission.GetExecutablePath()
-	logger.Debug("使用可执行文件: %s", exePath)
+	logger.Debug(i18n.Tf("chroot.using_exe", exePath))
 
 	// 构建子进程参数
 	args := []string{exePath, "chroot-child", absRootfsPath}
@@ -118,14 +119,14 @@ func Run(rootfsPath string, customShell string, netMode bool) error {
 		cmd.SysProcAttr.GidMappingsEnableSetgroups = false
 	}
 
-	logger.Info("创建子进程并启用命名空间隔离...")
+	logger.Info(i18n.T("chroot.creating_child"))
 
 	// 信号转发
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("启动子进程失败: %w", err)
+		return fmt.Errorf("%s", i18n.Tf("chroot.start_fail", err))
 	}
 
 	// 如果启用了网络模式，在子进程的网络命名空间中配置网络
@@ -134,11 +135,11 @@ func Run(rootfsPath string, customShell string, netMode bool) error {
 		time.Sleep(100 * time.Millisecond)
 
 		if err := network.SetupNetworkInChildNs(cmd.Process.Pid); err != nil {
-			logger.Warn("设置网络命名空间失败: %v", err)
+			logger.Warn(i18n.Tf("chroot.net_setup_fail", err))
 		} else {
 			// 设置 DNS
 			_ = network.SetupChildDns(absRootfsPath)
-			logger.Info("网络命名空间配置完成")
+			logger.Info(i18n.T("chroot.net_setup_done"))
 		}
 	}
 
@@ -179,13 +180,13 @@ func Run(rootfsPath string, customShell string, netMode bool) error {
 
 // ChildMain chroot 子进程入口
 func ChildMain(rootfsPath string, customShell string, customUser string, netMode string) error {
-	logger.Info("进入 chroot 子进程")
+	logger.Info(i18n.T("chroot.entering"))
 
 	// 首先设置主机名（在 UTS namespace 中）
 	hostname := env.GetHostname(rootfsPath, "groot")
-	logger.Debug("设置主机名为: %s", hostname)
+	logger.Debug(i18n.Tf("chroot.hostname_set", hostname))
 	if err := syscall.Sethostname([]byte(hostname)); err != nil {
-		logger.Warn("设置主机名失败: %v", err)
+		logger.Warn(i18n.Tf("chroot.hostname_fail", err))
 	}
 
 	// 保存原根目录的文件描述符，用于恢复
@@ -222,12 +223,12 @@ func ChildMain(rootfsPath string, customShell string, customUser string, netMode
 	}
 
 	// 挂载虚拟文件系统
-	logger.Info("正在挂载虚拟文件系统...")
+	logger.Info(i18n.T("chroot.mounting_vfs"))
 	mounted, err := mount.MountAll(rootfsPath)
 	if err != nil {
 		return err
 	}
-	logger.Info("虚拟文件系统挂载成功: %v", mounted)
+	logger.Info(i18n.Tf("chroot.mount_done", mounted))
 
 	// 创建必要的设备节点（在chroot之前，确保/dev中有基本设备）
 	createDevices(rootfsPath)
@@ -246,9 +247,9 @@ func ChildMain(rootfsPath string, customShell string, customUser string, netMode
 		// 卸载所有挂载点
 		logger.Debug("卸载虚拟文件系统...")
 		if err := mount.UnmountAll(mounted); err != nil {
-			logger.Warn("卸载失败: %v", err)
+			logger.Warn(i18n.Tf("chroot.unmount_fail", err))
 		}
-		logger.Info("虚拟文件系统已卸载")
+		logger.Info(i18n.T("chroot.unmounted"))
 	}()
 
 	// 直接使用 syscall.Chroot，不搞复杂的包装
@@ -280,42 +281,12 @@ func ChildMain(rootfsPath string, customShell string, customUser string, netMode
 	// 修复rootfs中的符号链接
 	fixSymLinks(rootfsPath)
 
-	// 设置环境变量
-	os.Clearenv()
-	for _, e := range newEnv {
-		parts := []rune(e)
-		eqIndex := -1
-		for i, r := range parts {
-			if r == '=' {
-				eqIndex = i
-				break
-			}
-		}
-		if eqIndex != -1 {
-			key := string(parts[:eqIndex])
-			value := string(parts[eqIndex+1:])
-			_ = os.Setenv(key, value)
-		}
-	}
-
-	// 告诉 dpkg 不需要 systemd
-	_ = os.Setenv("SYSTEMD_IN_DOCKER", "1")
-	_ = os.Setenv("DEBIAN_FRONTEND", "noninteractive")
-	_ = os.Setenv("SYSTEMD_IGNORE_ENVIRONMENT", "1")
-
-	// 创建假的 systemd 目录结构，让 dpkg 脚本认为 systemd 存在
+	// 创建必要的目录结构以欺骗需要 systemd 的脚本
 	os.MkdirAll("/run/systemd/system", 0755)
 	os.MkdirAll("/run/systemd/private", 0700)
 	os.MkdirAll("/run/dbus", 0755)
-
-	// 创建必要的文件来欺骗脚本
 	os.Create("/run/systemd/container")
 	os.Create("/run/systemd/systemd-logind")
-
-	// 创建一个 fake systemd 二进制来处理基本命令
-	fakeSystemd := `#!/bin/bash
-exit 0`
-	os.WriteFile("/usr/bin/systemd-run", []byte(fakeSystemd), 0755)
 
 	// 如果启用了网络模式，在子进程中设置 DNS
 	if netMode == "net" {
@@ -361,7 +332,6 @@ tmpfs /run tmpfs rw,nosuid,nodev,noexec,mode=755 0 0
 			wrapperScript := `#!/bin/bash
 export TMPDIR=/tmp
 export PACMAN_CACHE=/var/cache/pacman/pkg
-export LC_ALL=C
 
 mkdir -p /var/cache/pacman/pkg /var/lib/pacman/sync /var/lib/pacman/local /tmp
 chmod 1777 /tmp 2>/dev/null
@@ -387,7 +357,7 @@ exec /usr/bin/pacman.original "$@"
 	}
 
 	// 直接执行 shell，先 source 环境！
-	logger.Info("启动 shell: %s", shell)
+	logger.Info(i18n.Tf("chroot.starting_shell", shell))
 
 	// 为 Arch Linux 创建 pacman wrapper，解决挂载点检测问题
 	pacmanWrapper := ""
@@ -397,8 +367,6 @@ exec /usr/bin/pacman.original "$@"
 
 # 强制设置 PATH，确保优先使用 /dev/shm
 export PATH="/dev/shm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
-echo "DEBUG: Groot pacman wrapper called" >&2
 
 # 确保 /dev/shm 挂载
 if ! mountpoint -q /dev/shm 2>/dev/null; then
@@ -428,8 +396,6 @@ fi
 if [ ! -d /proc/self ]; then
     mount -t proc proc /proc 2>/dev/null
 fi
-
-echo "DEBUG: About to call real pacman" >&2
 
 # 执行原始 pacman
 exec /usr/bin/pacman "$@"
@@ -501,16 +467,16 @@ exec /usr/bin/pacman "$@"
 	cmd.Dir = userInfo.Home
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("启动 shell 失败: %w", err)
+		return fmt.Errorf("%s", i18n.Tf("chroot.shell_fail", err))
 	}
 
 	if err := cmd.Wait(); err != nil {
 		// 不立即退出groot，而是检查退出原因
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			// 如果是信号导致的退出（如Ctrl+C），不退出groot
-			logger.Info("shell退出，退出码: %d", exitErr.ExitCode())
+			logger.Info(i18n.Tf("chroot.shell_exit", exitErr.ExitCode()))
 		} else {
-			logger.Warn("shell运行失败: %v", err)
+			logger.Warn(i18n.Tf("chroot.shell_error", err))
 		}
 	}
 
@@ -576,11 +542,11 @@ func createDevices(rootfsPath string) {
 		// 标准字符设备
 		{"null", 1, 3, 0666},    // /dev/null - 空设备
 		{"zero", 1, 5, 0666},    // /dev/zero - 零设备
-		{"random", 1, 8, 0666},   // /dev/random - 随机数设备
-		{"urandom", 1, 9, 0666},  // /dev/urandom - 非阻塞随机数设备
-		{"full", 1, 7, 0666},     // /dev/full - 满设备
-		{"tty", 5, 0, 0666},      // /dev/tty - 当前终端
-		{"console", 5, 1, 0600},  // /dev/console - 系统控制台
+		{"random", 1, 8, 0666},  // /dev/random - 随机数设备
+		{"urandom", 1, 9, 0666}, // /dev/urandom - 非阻塞随机数设备
+		{"full", 1, 7, 0666},    // /dev/full - 满设备
+		{"tty", 5, 0, 0666},     // /dev/tty - 当前终端
+		{"console", 5, 1, 0600}, // /dev/console - 系统控制台
 	}
 
 	for _, dev := range devices {
@@ -655,7 +621,7 @@ func createDevices(rootfsPath string) {
 func fixSymLinks(rootfsPath string) {
 	// 常见的需要修复的链接路径
 	commonLinks := []struct {
-		linkPath string // 链接路径
+		linkPath string   // 链接路径
 		targets  []string // 可能的目标文件
 	}{
 		{"/usr/bin/lua", []string{"/usr/bin/lua5.4", "/usr/bin/lua5.3", "/usr/bin/lua5.1", "/usr/bin/luajit"}},

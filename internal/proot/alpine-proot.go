@@ -11,6 +11,7 @@ import (
 
 	"groot/internal/cleanup"
 	"groot/internal/env"
+	"groot/internal/i18n"
 	"groot/internal/logger"
 	"groot/internal/termux"
 	"groot/internal/usercheck"
@@ -18,12 +19,12 @@ import (
 
 // RunAlpineProot 专门为 alpine 量身定做的 100% 完美版本！！！
 func RunAlpineProot(rootfsPath string, customShell string) error {
-	logger.Info("Alpine 专属模式启动！rootfs: %s", rootfsPath)
+	logger.Info(i18n.Tf("alpine.start", rootfsPath))
 
 	// 查找系统 proot（使用安全的 LookPath，避免 Termux 中 SIGSYS 崩溃）
 	prootPath, err := termux.SafeLookPath("proot")
 	if err != nil {
-		return fmt.Errorf("没找到 proot：sudo apt install proot")
+		return fmt.Errorf("%s", i18n.T("alpine.no_proot"))
 	}
 
 	// 转换绝对路径
@@ -38,13 +39,13 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 
 	// 检查这是不是 alpine
 	if _, err := os.Stat(filepath.Join(absRootfsPath, "etc", "alpine-release")); os.IsNotExist(err) {
-		logger.Warn("这看起来不是 alpine，不过继续尝试")
+		logger.Warn(i18n.T("alpine.not_alpine"))
 	}
 
 	// 从 rootfs 的 /etc/passwd 中读取用户信息（包括 shell）
 	userInfo, err := usercheck.CheckUser(absRootfsPath, "root")
 	if err != nil {
-		logger.Warn("无法读取 passwd 文件，使用默认用户信息: %v", err)
+		logger.Warn(i18n.Tf("alpine.cannot_read_passwd", err))
 		userInfo = &usercheck.UserInfo{
 			Username: "root",
 			Uid:      0,
@@ -57,13 +58,13 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 	// 终极权限修复：确保整个 rootfs 属于当前用户！！！
 	currentUid := os.Getuid()
 	currentGid := os.Getgid()
-	logger.Info("终极修复 rootfs 权限为当前用户")
+	logger.Info(i18n.T("alpine.fix_rootfs_perm"))
 	fixAlpineRootfs(absRootfsPath, currentUid, currentGid)
 
 	// 在主机端清理 rootfs 中的宿主机环境痕迹
 	preHostname := env.GetHostname(absRootfsPath, cleanup.DefaultHostname)
 	if err := cleanup.CleanupRootfs(absRootfsPath, preHostname); err != nil {
-		logger.Warn("清理 rootfs 环境失败: %v", err)
+		logger.Warn(i18n.Tf("alpine.cleanup_fail", err))
 	}
 
 	// 确定 shell - 与 chroot 模式相同的逻辑
@@ -112,7 +113,7 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 		args = append(args[:1], append([]string{"--link2symlink"}, args[1:]...)...)
 	}
 
-	logger.Info("执行完美 proot 命令：%s %v", prootPath, args)
+	logger.Info(i18n.Tf("alpine.exec_cmd", prootPath, args))
 
 	cmd := exec.Command(prootPath, args...)
 	cmd.Stdin = os.Stdin

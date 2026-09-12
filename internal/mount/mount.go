@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"groot/internal/i18n"
 	"groot/internal/logger"
 	"groot/internal/usercheck"
 
@@ -92,7 +93,7 @@ func MountAll(rootfsPath string) ([]string, error) {
 
 	// 准备基础目录结构
 	if err := prepareDirs(rootfsPath); err != nil {
-		logger.Warn("准备目录失败: %v", err)
+		logger.Warn(i18n.Tf("mount.prepare_dirs_fail", err))
 	}
 
 	archRootfs := isArchLinux(rootfsPath)
@@ -108,7 +109,7 @@ func MountAll(rootfsPath string) ([]string, error) {
 
 		// 检查是否已挂载
 		if isMounted(target) {
-			logger.Debug("跳过已挂载: %s", target)
+			logger.Debug(i18n.Tf("mount.already_mounted", target))
 			mounted = append(mounted, target)
 			continue
 		}
@@ -116,13 +117,13 @@ func MountAll(rootfsPath string) ([]string, error) {
 		// 对于必需挂载点，我们要确保目标目录存在
 		if mp.required {
 			if err := os.MkdirAll(target, 0755); err != nil {
-				logger.Warn("创建目录失败 %s: %v", target, err)
+				logger.Warn(i18n.Tf("mount.create_dir_fail", target, err))
 			}
 		} else {
 			// 对于可选挂载点，检查源文件或目录是否存在
 			if mp.fstype == "" { // 绑定挂载
 				if _, err := os.Stat(mp.source); os.IsNotExist(err) {
-					logger.Debug("源不存在，跳过: %s", mp.source)
+					logger.Debug(i18n.Tf("mount.skip_source", mp.source))
 					continue
 				}
 			}
@@ -139,8 +140,8 @@ func MountAll(rootfsPath string) ([]string, error) {
 			if err == nil {
 				if sourceInfo.Mode().IsRegular() {
 					if _, err := os.Stat(target); os.IsNotExist(err) {
-						if err := os.WriteFile(target, []byte{}, 0644); err != nil {
-							logger.Warn("创建目标文件失败 %s: %v", target, err)
+					if err := os.WriteFile(target, []byte{}, 0644); err != nil {
+						logger.Warn(i18n.Tf("mount.create_target_fail", target, err))
 							continue
 						}
 					}
@@ -155,10 +156,10 @@ func MountAll(rootfsPath string) ([]string, error) {
 		}
 
 		// 尝试挂载
-		logger.Debug("挂载: %s -> %s", mp.source, target)
+		logger.Debug(i18n.Tf("mount.mounting", mp.source, target))
 		if err := syscall.Mount(mp.source, target, mp.fstype, mp.flags, mp.data); err != nil {
 			if mp.required {
-				logger.Warn("必需挂载点挂载失败 %s: %v，尝试备用方案", target, err)
+				logger.Warn(i18n.Tf("mount.required_fallback", target, err))
 				// 对于 /dev、/dev/pts、/dev/shm、/tmp、/run，尝试使用 tmpfs
 				if mp.fstype == "" && (mp.target == "dev" || mp.target == "dev/pts" || mp.target == "dev/shm" ||
 					mp.target == "tmp" || mp.target == "run") {
@@ -175,19 +176,19 @@ func MountAll(rootfsPath string) ([]string, error) {
 
 					if err := syscall.Mount("tmpfs", target, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, tmpfsData); err == nil {
 						mounted = append(mounted, target)
-						logger.Debug("使用 tmpfs 备用方案挂载成功: %s", target)
+						logger.Debug(i18n.Tf("mount.tmpfs_fallback_ok", target))
 
 						// 如果是 /dev，我们还需要创建一些基本的设备文件
 						if mp.target == "dev" {
 							if err := createDevFiles(target); err != nil {
-								logger.Warn("创建设备文件失败: %v", err)
+								logger.Warn(i18n.Tf("mount.devfiles_fail", err))
 							}
 						}
 						continue
 					}
 				}
 			}
-			logger.Warn("挂载失败 %s: %v", target, err)
+			logger.Warn(i18n.Tf("mount.mount_fail", target, err))
 		} else {
 			mounted = append(mounted, target)
 			logger.Debug("挂载成功: %s", target)
@@ -204,7 +205,7 @@ func MountAll(rootfsPath string) ([]string, error) {
 
 	// Arch Linux 特殊处理
 	if isArchLinux(rootfsPath) {
-		logger.Info("检测到 Arch Linux，设置 pacman 专用目录...")
+		logger.Info(i18n.T("mount.alarch_detected"))
 
 		// 确保 pacman 缓存目录存在
 		pacmanCache := filepath.Join(rootfsPath, "var/cache/pacman/pkg")
@@ -244,7 +245,7 @@ func MountAllProot(rootfsPath string) ([]string, error) {
 	var mounted []string
 
 	if err := prepareDirs(rootfsPath); err != nil {
-		logger.Warn("准备目录失败: %v", err)
+		logger.Warn(i18n.Tf("mount.prepare_dirs_fail", err))
 	}
 
 	rootfsDev := filepath.Join(rootfsPath, "dev")
@@ -291,14 +292,14 @@ func MountAllProot(rootfsPath string) ([]string, error) {
 	for _, mp := range prootMounts {
 		target := mp.target
 		if isMounted(target) {
-			logger.Debug("跳过已挂载: %s", target)
+			logger.Debug(i18n.Tf("mount.already_mounted", target))
 			mounted = append(mounted, target)
 			continue
 		}
 
-		logger.Debug("挂载: %s -> %s", mp.source, target)
+		logger.Debug(i18n.Tf("mount.mounting", mp.source, target))
 		if err := syscall.Mount(mp.source, target, mp.fstype, mp.flags, mp.data); err != nil {
-			logger.Warn("挂载失败 %s: %v", target, err)
+			logger.Warn(i18n.Tf("mount.mount_fail", target, err))
 		} else {
 			mounted = append(mounted, target)
 			logger.Debug("挂载成功: %s", target)
@@ -337,7 +338,7 @@ func MountAllProot(rootfsPath string) ([]string, error) {
 	}
 
 	if err := createDevFiles(rootfsDev); err != nil {
-		logger.Warn("创建设备文件失败: %v", err)
+		logger.Warn(i18n.Tf("mount.devfiles_fail", err))
 	}
 
 	ptmxPath := filepath.Join(rootfsDev, "ptmx")
@@ -405,21 +406,56 @@ func prepareDirs(rootfsPath string) error {
 // UnmountAll 卸载所有已挂载的文件系统
 func UnmountAll(mounted []string) error {
 	var lastErr error
+
+	// 构建已知挂载点集合，用于快速查找
+	mountSet := make(map[string]bool, len(mounted))
+	for _, p := range mounted {
+		mountSet[p] = true
+	}
+
+	// 获取当前命名空间中的实际挂载点列表
+	actualMounts, err := mountinfo.GetMounts(nil)
+	if err != nil {
+		logger.Debug("获取挂载列表失败: %v", err)
+	}
+
+	// 合并挂载列表：优先使用 mounted 列表中的路径，同时添加在命名空间中发现的 rootfs 相关挂载
+	var allPaths []string
+	seen := make(map[string]bool)
+	for _, p := range mounted {
+		if !seen[p] {
+			allPaths = append(allPaths, p)
+			seen[p] = true
+		}
+	}
+	for _, m := range actualMounts {
+		if !seen[m.Mountpoint] && mountSet[m.Mountpoint] {
+			allPaths = append(allPaths, m.Mountpoint)
+			seen[m.Mountpoint] = true
+		}
+	}
+
 	// 反向卸载（从最深层开始）
-	for i := len(mounted) - 1; i >= 0; i-- {
-		path := mounted[i]
+	for i := len(allPaths) - 1; i >= 0; i-- {
+		path := allPaths[i]
 		if !isMounted(path) {
-			logger.Debug("跳过未挂载: %s", path)
+			logger.Debug(i18n.Tf("mount.unmount_skip", path))
 			continue
 		}
-		logger.Debug("卸载: %s", path)
+		logger.Debug(i18n.Tf("mount.unmounting", path))
 		// 先尝试正常卸载
 		if err := syscall.Unmount(path, 0); err != nil {
 			logger.Debug("正常卸载失败，尝试 lazy unmount: %v", err)
 			// 尝试 lazy unmount
 			if err := syscall.Unmount(path, syscall.MNT_DETACH); err != nil {
-				logger.Warn("卸载失败 %s: %v", path, err)
-				lastErr = fmt.Errorf("卸载 %s 失败: %w", path, err)
+				// EINVAL 通常意味着路径无法解析（如 chroot 恢复后路径不在当前 root 下）
+				// 这种情况下挂载会在命名空间销毁时自动清理，不算严重错误
+				if err == syscall.EINVAL {
+					logger.Debug(i18n.Tf("mount.unmount_lazy_skip", path))
+				} else {
+					logger.Warn(i18n.Tf("mount.unmount_fail", path, err))
+					lastErr = fmt.Errorf("%s", i18n.Tf("mount.unmount_fail", path, err))
+				}
 			}
 		}
 	}
@@ -429,13 +465,13 @@ func UnmountAll(mounted []string) error {
 // ValidateRootfs 验证 rootfs 目录
 func ValidateRootfs(rootfsPath string, customShell string) error {
 	if _, err := os.Stat(rootfsPath); err != nil {
-		return fmt.Errorf("rootfs 不存在: %w", err)
+		return fmt.Errorf("%s", i18n.Tf("mount.rootfs_not_exist", err))
 	}
 	// 检查基本目录
 	requiredDirs := []string{"bin", "etc"}
 	for _, d := range requiredDirs {
 		if _, err := os.Stat(filepath.Join(rootfsPath, d)); err != nil {
-			return fmt.Errorf("缺少必需目录 %s", d)
+			return fmt.Errorf("%s", i18n.Tf("mount.missing_dir", d))
 		}
 	}
 	// 检查 shell
@@ -447,7 +483,7 @@ func ValidateRootfs(rootfsPath string, customShell string) error {
 		}
 	}
 	if _, err := os.Lstat(filepath.Join(rootfsPath, shellPath)); err != nil {
-		return fmt.Errorf("缺少 shell: %s", shellPath)
+		return fmt.Errorf("%s", i18n.Tf("mount.missing_shell", shellPath))
 	}
 	return nil
 }
@@ -500,9 +536,9 @@ func CleanupMounts(rootfsPath string) error {
 	}
 	if len(remaining) > 0 {
 		logger.Warn("仍有未清理的挂载: %v", remaining)
-		result = multierror.Append(result, fmt.Errorf("仍有 %d 个挂载未清理", len(remaining)))
+		result = multierror.Append(result, fmt.Errorf("%s", i18n.Tf("mount.still_remaining", len(remaining))))
 	} else {
-		logger.Info("挂载清理完成")
+		logger.Info(i18n.T("mount.cleanup_done"))
 	}
 
 	return result.ErrorOrNil()

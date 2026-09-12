@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"groot/internal/i18n"
 	"groot/internal/logger"
 	"groot/internal/termux"
 )
@@ -23,25 +24,25 @@ type NetworkConfig struct {
 }
 
 func SetupNetworkInChildNs(childPid int) error {
-	logger.Info("在子进程网络命名空间中配置网络...")
+	logger.Info(i18n.T("network.configuring_ns"))
 
 	if err := setupVethPair(childPid); err != nil {
-		return fmt.Errorf("设置 veth 对失败: %w", err)
+		return fmt.Errorf("%s", i18n.Tf("network.veth_fail", err))
 	}
 
 	if err := configureHostSide(childPid); err != nil {
-		return fmt.Errorf("配置主机端网络失败: %w", err)
+		return fmt.Errorf("%s", i18n.Tf("network.host_fail", err))
 	}
 
 	if err := configureChildSide(childPid); err != nil {
-		return fmt.Errorf("配置容器端网络失败: %w", err)
+		return fmt.Errorf("%s", i18n.Tf("network.guest_fail", err))
 	}
 
 	if err := setupNAT(); err != nil {
-		logger.Warn("设置 NAT 失败: %v", err)
+		logger.Warn(i18n.Tf("network.nat_fail", err))
 	}
 
-	logger.Info("网络配置完成")
+	logger.Info(i18n.T("network.config_done"))
 	return nil
 }
 
@@ -52,21 +53,21 @@ func setupVethPair(childPid int) error {
 	}
 
 	for _, cmdStr := range cmds {
-		logger.Debug("执行: %s", cmdStr)
+		logger.Debug(i18n.Tf("network.cmd_exec", cmdStr))
 		cmd := exec.Command("/bin/sh", "-c", cmdStr)
 		if output, err := cmd.CombinedOutput(); err != nil {
-			logger.Warn("命令失败: %s, 输出: %s", cmdStr, string(output))
-			return fmt.Errorf("执行 %s 失败: %w", cmdStr, err)
+			logger.Warn(i18n.Tf("network.cmd_fail", cmdStr, string(output)))
+			return fmt.Errorf("%s", i18n.Tf("network.cmd_exec_fail", cmdStr, err))
 		}
 	}
 
 	// 将 veth-guest 移动到子进程的网络命名空间
 	cmdStr := fmt.Sprintf("ip link set veth-guest netns %d", childPid)
-	logger.Debug("执行: %s", cmdStr)
+	logger.Debug(i18n.Tf("network.cmd_exec", cmdStr))
 	cmd := exec.Command("/bin/sh", "-c", cmdStr)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		logger.Warn("命令失败: %s, 输出: %s", cmdStr, string(output))
-		return fmt.Errorf("执行 %s 失败: %w", cmdStr, err)
+		logger.Warn(i18n.Tf("network.cmd_fail", cmdStr, string(output)))
+		return fmt.Errorf("%s", i18n.Tf("network.cmd_exec_fail", cmdStr, err))
 	}
 
 	return nil
@@ -79,11 +80,11 @@ func configureHostSide(childPid int) error {
 	}
 
 	for _, cmdStr := range cmds {
-		logger.Debug("执行: %s", cmdStr)
+		logger.Debug(i18n.Tf("network.cmd_exec", cmdStr))
 		cmd := exec.Command("/bin/sh", "-c", cmdStr)
 		if output, err := cmd.CombinedOutput(); err != nil {
-			logger.Warn("命令失败: %s, 输出: %s", cmdStr, string(output))
-			return fmt.Errorf("执行 %s 失败: %w", cmdStr, err)
+			logger.Warn(i18n.Tf("network.cmd_fail", cmdStr, string(output)))
+			return fmt.Errorf("%s", i18n.Tf("network.cmd_exec_fail", cmdStr, err))
 		}
 	}
 
@@ -99,10 +100,10 @@ func configureChildSide(childPid int) error {
 	}
 
 	for _, cmdStr := range cmds {
-		logger.Debug("执行: %s", cmdStr)
+		logger.Debug(i18n.Tf("network.cmd_exec", cmdStr))
 		cmd := exec.Command("/bin/sh", "-c", cmdStr)
 		if output, err := cmd.CombinedOutput(); err != nil {
-			logger.Warn("命令失败: %s, 输出: %s", cmdStr, string(output))
+			logger.Warn(i18n.Tf("network.cmd_fail", cmdStr, string(output)))
 		}
 	}
 
@@ -119,10 +120,10 @@ func setupNAT() error {
 	}
 
 	for _, cmdStr := range cmds {
-		logger.Debug("执行: %s", cmdStr)
+		logger.Debug(i18n.Tf("network.cmd_exec", cmdStr))
 		cmd := exec.Command("/bin/sh", "-c", cmdStr)
 		if output, err := cmd.CombinedOutput(); err != nil {
-			logger.Warn("命令失败: %s, 输出: %s", cmdStr, string(output))
+			logger.Warn(i18n.Tf("network.cmd_fail", cmdStr, string(output)))
 		}
 	}
 
@@ -135,7 +136,7 @@ func SetupChildDns(rootfsPath string) error {
 	// 确保目录存在
 	dir := filepath.Dir(resolvPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("创建目录失败: %w", err)
+		return fmt.Errorf("%s", i18n.T("network.create_dir_fail"))
 	}
 
 	dnsServers := []string{"10.0.0.1", "8.8.8.8", "8.8.4.4", "114.114.114.114"}
@@ -146,14 +147,14 @@ func SetupChildDns(rootfsPath string) error {
 	}
 
 	if err := os.WriteFile(resolvPath, []byte(content.String()), 0644); err != nil {
-		return fmt.Errorf("写入 resolv.conf 失败: %w", err)
+		return fmt.Errorf("%s", i18n.T("network.write_resolv_fail"))
 	}
 
 	return nil
 }
 
 func CleanupNetworkOnHost() {
-	logger.Info("清理主机端网络资源...")
+	logger.Info(i18n.T("network.cleanup_host"))
 
 	cmds := []string{
 		"ip link delete veth-host 2>/dev/null || true",
@@ -168,7 +169,7 @@ func CleanupNetworkOnHost() {
 		cmd.Run()
 	}
 
-	logger.Info("主机端网络清理完成")
+	logger.Info(i18n.T("network.cleanup_done"))
 }
 
 // CleanupContainerResources 清理容器使用的所有网络资源。
@@ -177,7 +178,7 @@ func CleanupNetworkOnHost() {
 //  2. 尝试清理容器网络命名空间中的 veth-guest（若容器已终止）
 //  3. 禁用 IP 转发（如果之前启用过）
 func CleanupContainerResources(pid int, rootfs string) {
-	logger.Info("清理容器 %d 的网络资源...", pid)
+	logger.Info(i18n.Tf("network.cleanup_container", pid))
 
 	// 1. 清理主机端资源
 	CleanupNetworkOnHost()
@@ -201,13 +202,13 @@ func CleanupContainerResources(pid int, rootfs string) {
 	// 注意：这可能会影响其他容器或系统功能，因此仅在确定没有其他使用时才执行
 	// 此处不自动禁用，以免影响其他容器
 
-	logger.Info("容器 %d 的网络资源清理完成", pid)
+	logger.Info(i18n.Tf("network.cleanup_container_done", pid))
 }
 
 // EnsureNoOrphanedNetwork 检测并清理可能残留的孤立网络资源。
 // 用于启动容器前或系统启动时，清理上次异常退 possible 留下的残留。
 func EnsureNoOrphanedNetwork() {
-	logger.Debug("检测孤立网络资源...")
+	logger.Debug(i18n.T("network.detect_orphan"))
 
 	// 检测 veth-host 是否存在但无对应容器
 	// 尝试删除 veth-host（如果存在）
@@ -225,7 +226,7 @@ func EnsureNoOrphanedNetwork() {
 		exec.Command("/bin/sh", "-c", cmdStr).Run()
 	}
 
-	logger.Debug("孤立网络资源清理完成")
+	logger.Debug(i18n.T("network.orphan_done"))
 }
 
 func GetHostIP() string {
@@ -247,24 +248,24 @@ func GetHostIP() string {
 
 func CheckNetworkSupport() (bool, string) {
 	if _, err := os.Stat("/proc/sys/net/ipv4/ip_forward"); err != nil {
-		return false, "未找到 /proc/sys/net/ipv4/ip_forward"
+		return false, i18n.T("network.no_ip_forward_file")
 	}
 
 	if _, err := termux.SafeLookPath("ip"); err != nil {
-		return false, "未找到 ip 命令"
+		return false, i18n.T("network.no_ip_cmd")
 	}
 
 	if _, err := termux.SafeLookPath("nsenter"); err != nil {
-		return false, "未找到 nsenter 命令"
+		return false, i18n.T("network.no_nsenter_cmd")
 	}
 
 	data, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
 	if err == nil {
 		if strings.TrimSpace(string(data)) == "0" {
-			logger.Warn("IP 转发未启用，尝试启用...")
+			logger.Warn(i18n.T("network.no_ip_forward"))
 			cmd := exec.Command("/bin/sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward")
 			if err := cmd.Run(); err != nil {
-				logger.Warn("启用 IP 转发失败: %v", err)
+				logger.Warn(i18n.Tf("network.ip_forward_fail", err))
 			}
 		}
 	}
