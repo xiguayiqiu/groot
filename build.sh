@@ -4,7 +4,7 @@ set -e
 
 # ============================================
 #  Groot 编译与打包脚本
-#  支持生成 deb/rpm/pacman/apk 安装包
+#  支持 tar.xz 打包
 # ============================================
 
 PROJECT_NAME="groot"
@@ -64,6 +64,15 @@ check_go_env() {
     exit 1
   fi
   echo "✓ Go 环境检查通过"
+}
+
+# 检查 xz 是否可用
+check_xz() {
+  if ! command -v xz &>/dev/null; then
+    echo "✗ 错误: 未找到 xz，请安装 xz-utils"
+    exit 1
+  fi
+  echo "✓ xz 环境检查通过"
 }
 
 # ============================
@@ -175,48 +184,27 @@ echo "  卸载: sudo groot-uninstall"
 INSTALL
 }
 
-# 生成 uninstall 脚本
-generate_uninstall_script() {
-  cat <<'UNINSTALL'
-#!/bin/sh
-# groot 卸载脚本
-# 需要 root/sudo 权限
-
-if [ "$(id -u)" -ne 0 ] && [ -z "$TERMUX_VERSION" ]; then
-    echo "请使用 sudo 运行卸载:"
-    echo "  sudo sh groot-uninstall"
-    exit 1
-fi
-echo "正在卸载 groot..."
-rm -f /usr/local/bin/groot
-rm -f /data/data/com.termux/files/usr/bin/groot
-rm -f /usr/local/bin/groot-uninstall
-rm -f /data/data/com.termux/files/usr/bin/groot-uninstall
-echo "groot 已卸载"
-UNINSTALL
-}
-
-# --- zip 包 ---
-package_zip() {
+# tar.xz 打包
+package_tarxz() {
   local arch=$1 binary_name=$2
-  echo "→ 打包 zip (${arch})..."
+  echo "→ 打包 tar.xz (${arch})..."
 
-  local zip_arch
+  local tar_arch
   local out_name
   case "$arch" in
-  amd64) zip_arch=linux_amd64 ;;
-  x86) zip_arch=linux_i386 ;;
-  armv7) zip_arch=linux_armv7 ;;
-  armv8) zip_arch=linux_arm64 ;;
-  *) zip_arch=$arch ;;
+  amd64) tar_arch=linux_amd64 ;;
+  x86) tar_arch=linux_i386 ;;
+  armv7) tar_arch=linux_armv7 ;;
+  armv8) tar_arch=linux_arm64 ;;
+  *) tar_arch=$arch ;;
   esac
 
-  out_name="${PROJECT_NAME}-${VERSION}-${zip_arch}.zip"
+  out_name="${PROJECT_NAME}-${VERSION}-${tar_arch}.tar.xz"
   if [ "$IS_TERMUX" -eq 1 ]; then
-    out_name="${PROJECT_NAME}-${VERSION}-termux_${zip_arch}.zip"
+    out_name="${PROJECT_NAME}-${VERSION}-termux_${tar_arch}.tar.xz"
   fi
 
-  local pkg_dir="${OUTPUT_DIR}/zip/${out_name%.zip}"
+  local pkg_dir="${OUTPUT_DIR}/tarxz/${out_name%.tar.xz}"
   mkdir -p "${pkg_dir}"
 
   # 复制二进制
@@ -227,38 +215,19 @@ package_zip() {
   generate_install_script "$arch" >"${pkg_dir}/install.sh"
   chmod 755 "${pkg_dir}/install.sh"
 
-  # 打包为 zip（只包含二进制和安装脚本）
+  # 打包为 tar.xz
   local abs_output_dir
   abs_output_dir="$(cd "${OUTPUT_DIR}" && pwd)"
   pushd "${pkg_dir}" >/dev/null
-  if command -v zip &>/dev/null; then
-    zip -q "${abs_output_dir}/${out_name}" groot install.sh
-    local ret=$?
+  if tar -cJf "${abs_output_dir}/${out_name}" groot install.sh 2>/dev/null; then
     popd >/dev/null
-    rm -rf "${OUTPUT_DIR}/zip"
-    if [ $ret -eq 0 ]; then
-      echo "  ✓ ${out_name}"
-      return 0
-    fi
-    echo "  ⚠ zip 打包失败"
-    return 1
+    rm -rf "${OUTPUT_DIR}/tarxz"
+    echo "  ✓ ${out_name}"
+    return 0
   else
-    # fallback: 使用 bsdtar 或 tar
-    if command -v bsdtar &>/dev/null; then
-      bsdtar -acf "${abs_output_dir}/${out_name}" groot install.sh 2>/dev/null
-      local ret=$?
-      popd >/dev/null
-      rm -rf "${OUTPUT_DIR}/zip"
-      if [ $ret -eq 0 ]; then
-        echo "  ✓ ${out_name} (bsdtar)"
-        return 0
-      fi
-      echo "  ⚠ bsdtar 打包失败"
-      return 1
-    fi
     popd >/dev/null
-    rm -rf "${OUTPUT_DIR}/zip"
-    echo "  ⚠ 需要 zip 或 bsdtar，跳过打包"
+    rm -rf "${OUTPUT_DIR}/tarxz"
+    echo "  ⚠ tar.xz 打包失败"
     return 1
   fi
 }
@@ -285,24 +254,24 @@ build_and_package() {
 
   echo ""
 
-  # 打包为 zip
-  local zip_ok=0
-  if package_zip "$arch" "$binary_name"; then
-    zip_ok=1
+  # 打包为 tar.xz
+  local tarxz_ok=0
+  if package_tarxz "$arch" "$binary_name"; then
+    tarxz_ok=1
 
-    # armv7/armv8 额外生成 Termux 专用 zip
+    # armv7/armv8 额外生成 Termux 专用包
     if [ "$arch" = "armv7" ] || [ "$arch" = "armv8" ]; then
       local saved_is_termux=$IS_TERMUX
       IS_TERMUX=1
       set +e
-      package_zip "$arch" "$binary_name" && zip_ok=1
+      package_tarxz "$arch" "$binary_name" && tarxz_ok=1
       set -e
       IS_TERMUX=$saved_is_termux
     fi
   fi
 
-  # 有 zip 包后删除二进制
-  if [ "$zip_ok" -eq 1 ]; then
+  # 有包后删除二进制
+  if [ "$tarxz_ok" -eq 1 ]; then
     rm -f "${OUTPUT_DIR}/${binary_name}"
   else
     echo "  ℹ 保留二进制文件: ${binary_name}"
@@ -377,14 +346,14 @@ package_existing() {
     return 1
   fi
 
-  package_zip "$arch" "$binary_name"
+  package_tarxz "$arch" "$binary_name"
 
-  # armv7/armv8 额外生成 Termux 专用 zip
+  # armv7/armv8 额外生成 Termux 专用包
   if [ "$arch" = "armv7" ] || [ "$arch" = "armv8" ]; then
     local saved_is_termux=$IS_TERMUX
     IS_TERMUX=1
     set +e
-    package_zip "$arch" "$binary_name"
+    package_tarxz "$arch" "$binary_name"
     set -e
     IS_TERMUX=$saved_is_termux
   fi
@@ -396,7 +365,7 @@ list_output() {
   echo "--- 输出文件 ---"
   echo "----------------------------------------"
   if [ -d "$OUTPUT_DIR" ]; then
-    ls -lh "$OUTPUT_DIR" | grep -v '^total'
+    ls -lh "$OUTPUT_DIR"/*.tar.xz 2>/dev/null | grep -v '^total' || echo "  (无 tar.xz 文件)"
   fi
   echo "----------------------------------------"
 }
@@ -412,7 +381,6 @@ clean() {
   fi
 }
 
-# 安装依赖工具提示
 # 帮助
 show_help() {
   cat <<EOF
@@ -422,7 +390,7 @@ show_help() {
 命令:
   all               编译所有架构并打包 (默认)
   build <arch>      仅编译指定架构并打包
-  package <arch>    仅打包已有二进制为 zip
+  package <arch>    仅打包已有二进制为 tar.xz
   clean             清理构建文件
   help              显示帮助
 
@@ -435,20 +403,20 @@ show_help() {
 Termux 支持:
   在 Termux 中运行本脚本会自动检测并进入 Termux 兼容模式:
     - 只编译本机架构 (armv8 或 armv7)
-    - zip 包中的 install 脚本安装到 \$PREFIX/bin
+    - tar.xz 包中的 install 脚本安装到 \$PREFIX/bin
     - 附带 groot-uninstall 卸载脚本
 
 示例:
   $0                         # 编译全部并打包
-  $0 build amd64             # 仅编译 amd64 并打包 zip
-  $0 package amd64           # 仅打包已有二进制为 zip
+  $0 build amd64             # 仅编译 amd64 并打包 tar.xz
+  $0 package amd64           # 仅打包已有二进制为 tar.xz
   $0 clean                   # 清理
 
 输出:
-  .zip 文件包含:
+  .tar.xz 文件包含:
     groot             二进制文件
     install.sh        安装脚本 (安装到 /usr/local/bin/ 或 Termux 的 \$PREFIX/bin/，自动生成卸载命令)
-    armv7/armv8 额外生成 termux_ 前缀的 Termux 专用 zip
+    armv7/armv8 额外生成 termux_ 前缀的 Termux 专用包
 
 EOF
 }
@@ -480,6 +448,7 @@ main() {
 
   print_header
   check_go_env
+  check_xz
   create_output_dir
 
   case "${cmd:-all}" in
