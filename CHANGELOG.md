@@ -12,6 +12,11 @@
   - 从 Firecracker S3 下载官方内核，交互式选择（进度条 + 多选）
   - 支持 x86_64 和 aarch64 双架构
   - 一键下载所有可用内核
+  - VMM 命令重构为子命令：`run`、`download-kernel`、`setup-network`、`rm-network`
+- **VMM 网络配置**：新增 `groot vmm setup-network` 和 `groot vmm rm-network` 命令
+  - `setup-network`：一次性配置 TAP 设备、NAT、/dev/kvm 权限
+  - `rm-network`：清除网络节点和相关配置
+  - 支持无 root 运行：配置完成后日常使用无需 sudo
 - **新增 `--kernel-args` 参数**：自定义内核启动参数，覆盖默认值
   - 支持 systemd、openrc、runit 等 init 系统
   - 例：`--kernel-args "console=ttyS0,115200n8 reboot=k panic=1 nomodule systemd.unit=multi-user.target"`
@@ -22,12 +27,16 @@
 
 ### 🔧 修复与优化
 
+- **修复 setup-network 未启动 DHCP 服务器**：`setup-network` 命令现在自动启动 dnsmasq，VM 可通过 DHCP 获取 IP
+- **修复 SetupTapDevice 跳过 dnsmasq**：TAP 已存在时仍确保 dnsmasq 在运行，支持 `--tap` 预创建 TAP 设备
+- **新增 `dnsmasqIsRunning()`**：通过 PID 文件检查 dnsmasq 是否已运行，避免重复启动
 - **修复 kernel download 显示问题**：进度条 `[====] 42%` 正确显示
 - **修复 host interface 检测**：`FindHostInterface` 排除 `groot-tap*` 前缀的 TAP 设备
 - **修复 sudo 非交互执行**：所有网络命令采用直接执行-降级 sudo 模式
 - **修复 iptables 规则添加失败**：`|| true` 允许规则已存在时继续
 - **移除 logger.Debug 吞掉错误**：改为 `fmt.Fprintf(os.Stderr, ...)` 直接输出
 - **修复 runtime.GOARCH 到 S3 arch 映射**：正确映射 `amd64` → `x86_64`
+- **TAP 设备复用检测**：启动时检测 TAP 是否已存在，避免重复创建
 
 ---
 

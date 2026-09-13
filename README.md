@@ -259,46 +259,111 @@ groot 支持使用 Firecracker 启动轻量级 microVM，需要 rootfs.ext4 虚�
 - Firecracker 二进制（安装到 `~/bin/firecracker` 或 `/usr/local/bin/firecracker`）
 - rootfs.ext4（ext4 格式虚拟磁盘，详见 [创建 rootfs.ext4](docs/create-rootfs.md)）
 
-### 命令
+### 子命令
+
+| 子命令 | 说明 |
+|--------|------|
+| `groot vmm run` | 启动 microVM |
+| `groot vmm download-kernel` | 从 Firecracker S3 下载官方内核 |
+| `groot vmm setup-network` | 配置 VMM 网络（需要 root，一次性运行） |
+| `groot vmm rm-network` | 清除 VMM 网络节点（需要 root） |
+
+### 快速开始
+
+```bash
+# 1. 下载内核（交互式选择）
+./groot vmm download-kernel
+
+# 2. 配置网络（一次性，需要 root）
+sudo ./groot vmm setup-network
+
+# 3. 启动 VM（无需 root）
+./groot vmm run --kernel kernel/x86_64/vmlinux-6.18.44 --rootfs rootfs/rootfs.ext4 --net
+
+# 4. SSH 访问 VM（DHCP 分配 IP）
+ssh root@172.16.0.25   # 密码: root
+```
+
+### 下载内核
 
 ```bash
 # 下载当前架构的官方内核（交互式选择）
-sudo ./groot vmm --download-kernel
+./groot vmm download-kernel
 
 # 下载所有可用内核（当前架构）
-sudo ./groot vmm --download-kernel --all
+./groot vmm download-kernel --all
 
 # 下载指定架构的内核
-sudo ./groot vmm --download-kernel --arch x86_64
-sudo ./groot vmm --download-kernel --arch aarch64
+./groot vmm download-kernel --arch x86_64
+./groot vmm download-kernel --arch aarch64
 
 # 下载所有架构的所有内核
-sudo ./groot vmm --download-kernel --all --arch all
+./groot vmm download-kernel --all --arch all
+```
 
+### 启动 VM
+
+```bash
 # 基本启动（无网络）
-sudo ./groot vmm --kernel kernel/amd64/vmlinux.bin --rootfs rootfs/rootfs.ext4
+./groot vmm run --kernel kernel/x86_64/vmlinux-6.18.44 --rootfs rootfs/rootfs.ext4
 
-# 启用网络（需要 root）
-sudo ./groot vmm --kernel kernel/amd64/vmlinux.bin --rootfs rootfs/rootfs.ext4 --net
+# 启用网络
+./groot vmm run --kernel kernel/x86_64/vmlinux-6.18.44 --rootfs rootfs/rootfs.ext4 --net
 
 # 自定义配置
-sudo ./groot vmm \
-  --kernel kernel/amd64/vmlinux.bin \
+./groot vmm run \
+  --kernel kernel/x86_64/vmlinux-6.18.44 \
   --rootfs rootfs/rootfs.ext4 \
   --mem 512 \
   --cpus 4 \
   --net
+
+# 自定义内核参数
+./groot vmm run \
+  --kernel kernel/x86_64/vmlinux-6.18.44 \
+  --rootfs rootfs/rootfs.ext4 \
+  --net \
+  --kernel-args "console=ttyS0,115200n8 reboot=k panic=1 nomodule systemd.unit=multi-user.target"
 ```
 
-### 参数
+### 网络配置
+
+#### 方式一：一次性配置（推荐）
+
+```bash
+# 配置网络（需要 root）
+sudo ./groot vmm setup-network
+
+# 清除网络（需要 root）
+sudo ./groot vmm rm-network
+```
+
+`setup-network` 会自动完成：
+- 创建 TAP 设备（`groot-tap0`），分配给当前用户
+- 配置 IP 地址和 NAT 转发
+- 启动 dnsmasq DHCP 服务器
+- 授权 `/dev/kvm` 和 `/dev/net/tun`
+
+配置完成后，日常使用无需 root：
+
+```bash
+./groot vmm run --kernel ... --rootfs ... --net
+```
+
+#### 方式二：root 运行
+
+如果不运行 `setup-network`，也可以直接使用 root：
+
+```bash
+sudo ./groot vmm run --kernel ... --rootfs ... --net
+```
+
+### run 参数
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `--download-kernel` | 从 Firecracker S3 下载官方内核 | - |
-| `--all` | 下载所有可用内核（配合 `--download-kernel` 使用） | - |
-| `--arch` | 架构：`x86_64`、`aarch64`、`all` | 当前架构 |
-| `--kernel` | Linux 内核路径 | `kernel/amd64/vmlinux.bin` |
-| `--rootfs` | rootfs.ext4 虚拟磁盘路径 | `rootfs/rootfs.ext4` |
+| `--kernel`, `-k` | Linux 内核路径 | `kernel/amd64/vmlinux.bin` |
+| `--rootfs`, `-r` | rootfs.ext4 虚拟磁盘路径 | `rootfs/rootfs.ext4` |
 | `--mem` | 内存大小 (MB) | 256 |
 | `--cpus` | CPU 核心数 | 2 |
 | `--net` | 启用网络（TAP + NAT + DHCP） | 关闭 |
@@ -337,7 +402,8 @@ sudo ./groot vmm \
 │   │   └── env.go            # 完美发行版识别变量配置
 │   ├── vmm/                  # Firecracker microVM 支持
 │   │   ├── vmm.go            # VM 核心逻辑（启动、配置、信号处理）
-│   │   └── network.go        # TAP 设备、NAT、DHCP 网络支持
+│   │   ├── network.go        # TAP 设备、NAT、DHCP 网络支持
+│   │   └── download.go       # 从 Firecracker S3 下载内核
 │   ├── i18n/
 │   │   ├── i18n.go           # 国际化框架与语言检测
 │   │   └── messages.go       # 中英文翻译字符串

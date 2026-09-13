@@ -1549,8 +1549,8 @@ var messages = map[string]map[Lang]string{
 		LangEN: "Specify CPU cores (default: 2)",
 	},
 	"cli.vmm.net": {
-		LangZH: "启用网络支持（需要 root 权限创建 TAP 设备）",
-		LangEN: "Enable network support (requires root for TAP device)",
+		LangZH: "启用网络支持（需要 root 或预创建的 TAP 设备）",
+		LangEN: "Enable network support (requires root or pre-created TAP device)",
 	},
 	"cli.vmm.tap": {
 		LangZH: "指定 TAP 设备名称（默认: groot-tap0）",
@@ -1635,6 +1635,18 @@ var messages = map[string]map[Lang]string{
 	"cli.vmm.kernel_args": {
 		LangZH: "自定义内核启动参数（覆盖默认值）",
 		LangEN: "Custom kernel boot arguments (overrides default)",
+	},
+	"cli.vmm.run": {
+		LangZH: "启动 microVM",
+		LangEN: "Launch microVM",
+	},
+	"cli.vmm.setup_network": {
+		LangZH: "配置 VMM 网络（需要 root，一次性运行）",
+		LangEN: "Setup VMM network (requires root, run once)",
+	},
+	"cli.vmm.rm_network": {
+		LangZH: "清除 VMM 网络节点（需要 root）",
+		LangEN: "Remove VMM network node (requires root)",
 	},
 	"vmm.download.fetching": {
 		LangZH: "正在从 Firecracker S3 获取可用内核...",

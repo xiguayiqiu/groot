@@ -14,6 +14,10 @@ pacman -S debootstrap e2progs            # Arch
 apk add e2fsprogs                        # Alpine
 ```
 
+## 推荐大小
+
+rootfs 镜像建议 **2GB**，包含完整系统 + openssh + 开发工具。
+
 ## 方法一：使用 debootstrap（推荐）
 
 ### 1. 创建基础系统
@@ -61,6 +65,10 @@ apk add --no-cache \
   curl \
   wget
 
+# SSH 服务（用于远程登录）
+apk add --no-cache \
+  openssh
+
 # 开发工具（可选）
 apk add --no-cache \
   gcc \
@@ -83,6 +91,13 @@ cat > /etc/inittab << 'EOF'
 ::ctrlaltdel:/sbin/reboot
 EOF
 
+# 配置 SSH
+mkdir -p /etc/ssh
+cat > /etc/ssh/sshd_config << 'EOF'
+PermitRootLogin yes
+PasswordAuthentication yes
+EOF
+
 exit
 ```
 
@@ -97,8 +112,8 @@ umount /tmp/rootfs/sys
 ### 5. 创建 ext4 镜像
 
 ```bash
-# 创建 1GB 空白镜像
-dd if=/dev/zero of=rootfs/rootfs.ext4 bs=1M count=1024
+# 创建 2GB 空白镜像
+dd if=/dev/zero of=rootfs/rootfs.ext4 bs=1M count=2048
 
 # 格式化为 ext4
 mkfs.ext4 -F rootfs/rootfs.ext4
@@ -125,7 +140,7 @@ umount /mnt/rootfs
 
 ```bash
 # 1. 创建空白镜像
-dd if=/dev/zero of=rootfs/rootfs.ext4 bs=1M count=1024
+dd if=/dev/zero of=rootfs/rootfs.ext4 bs=1M count=2048
 mkfs.ext4 -F rootfs/rootfs.ext4
 
 # 2. 挂载
@@ -170,7 +185,7 @@ umount /mnt/rootfs
 wget https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-minirootfs-3.21.0-x86_64.tar.gz
 
 # 创建镜像
-dd if=/dev/zero of=rootfs/rootfs.ext4 bs=1M count=512
+dd if=/dev/zero of=rootfs/rootfs.ext4 bs=1M count=2048
 mkfs.ext4 -F rootfs/rootfs.ext4
 
 # 挂载并解压
@@ -306,8 +321,71 @@ file rootfs/rootfs.ext4    # 应显示 "Linux rev 1.0 ext4 filesystem"
 file kernel/amd64/vmlinux.bin  # 应显示 ELF 64-bit LSB executable
 ```
 ### 启动命令
+
+```bash
+# 下载内核
+./groot vmm download-kernel
+
+# 配置网络（一次性，需要 root）
+sudo ./groot vmm setup-network
+
+# 启动 VM（无需 root）
+./groot vmm run --kernel kernel/x86_64/vmlinux-6.18.44 --rootfs rootfs/rootfs.ext4 --net
+
+# SSH 访问
+ssh root@172.16.0.25   # 密码: root
 ```
-sudo ./groot vmm --kernel [内核] --rootfs [ext4的rootfs文件系统磁盘] --mem [内存] --cpus [cpu核心数] --net
+
+## 网络配置
+
+### 一键配置（推荐）
+
+```bash
+sudo ./groot vmm setup-network
+```
+
+此命令会自动完成：
+1. 创建 TAP 设备（`groot-tap0`），分配给当前用户
+2. 配置 IP 地址和 NAT 转发
+3. 授权 `/dev/kvm` 和 `/dev/net/tun`
+
+配置完成后，日常使用无需 root：
+
+```bash
+./groot vmm run --kernel kernel/x86_64/vmlinux-6.18.44 --rootfs rootfs/rootfs.ext4 --net
+```
+
+### 清除网络
+
+```bash
+sudo ./groot vmm rm-network
+```
+
+### 手动配置
+
+如果需要手动配置网络：
+
+```bash
+# 创建 TAP 设备（指定用户）
+sudo ip tuntap add dev groot-tap0 mode tap user $(id -u)
+
+# 配置 IP
+sudo ip addr add 172.16.0.1/24 dev groot-tap0
+sudo ip link set groot-tap0 up
+
+# 启用 IP 转发
+sudo sysctl -w net.ipv4.ip_forward=1
+
+# 配置 NAT
+sudo iptables -t nat -A POSTROUTING -s 172.16.0.0/24 -j MASQUERADE
+sudo iptables -A FORWARD -i groot-tap0 -j ACCEPT
+sudo iptables -A FORWARD -o groot-tap0 -j ACCEPT
+
+# 授权 /dev/kvm
+sudo setfacl -m u:$(id -u):rw /dev/kvm
+
+# 确保 /dev/net/tun 可访问
+sudo chmod 0666 /dev/net/tun
 ```
 
 ## 完整的自动化脚本
@@ -317,7 +395,7 @@ sudo ./groot vmm --kernel [内核] --rootfs [ext4的rootfs文件系统磁盘] --
 set -e
 
 ROOTFS_IMG="rootfs/rootfs.ext4"
-ROOTFS_SIZE_MB=1024
+ROOTFS_SIZE_MB=2048
 MOUNT_DIR="/mnt/rootfs"
 
 echo "=== 创建 rootfs.ext4 虚拟磁盘 ==="
@@ -343,6 +421,10 @@ echo "安装 Alpine Linux..."
 apk --initdb --allow-untrusted --arch x86_64 --root "$MOUNT_DIR" \
   --repository https://dl-cdn.alpinelinux.org/alpine/v3.21/main \
   add alpine-base busybox musl openrc
+
+# 安装 SSH
+echo "安装 SSH..."
+chroot "$MOUNT_DIR" /bin/sh -c 'apk add --no-cache openssh'
 
 # 配置 /sbin/init
 echo "配置启动脚本..."
@@ -385,6 +467,14 @@ iface lo inet loopback
 auto eth0
 iface eth0 inet dhcp
 NETEOF
+
+# 配置 SSH
+echo "配置 SSH..."
+mkdir -p "$MOUNT_DIR/etc/ssh"
+cat > "$MOUNT_DIR/etc/ssh/sshd_config" << 'SSHEOF'
+PermitRootLogin yes
+PasswordAuthentication yes
+SSHEOF
 
 # 设置 root 密码
 chroot "$MOUNT_DIR" /bin/sh -c 'echo "root:root" | chpasswd'

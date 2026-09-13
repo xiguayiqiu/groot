@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"groot/internal/logger"
@@ -27,29 +28,193 @@ func DefaultNetworkConfig() NetworkConfig {
 	}
 }
 
-func SetupTapDevice(cfg NetworkConfig) error {
-	if err := createTapDevice(cfg.TapName); err != nil {
-		return err
+func SetupNetwork() error {
+	tapName := "groot-tap0"
+	hostIP := "172.16.0.1"
+	uid := os.Getuid()
+
+	if uid != 0 {
+		return fmt.Errorf("setup-network requires root privileges\nPlease run: sudo ./groot vmm setup-network")
 	}
 
-	if err := configureTapIP(cfg.TapName, cfg.HostIP, cfg.MaskLen); err != nil {
-		CleanupTapDevice(cfg.TapName)
-		return err
-	}
-
-	if err := enableIPForwarding(); err != nil {
-		logger.Warn("IP forwarding failed (may need root): %v", err)
-	}
-
-	if cfg.HostIface != "" {
-		if err := setupNAT(cfg.TapName, cfg.HostIface); err != nil {
-			logger.Warn("NAT setup failed (may need root): %v", err)
+	// Get real user (the one who invoked sudo)
+	realUID := os.Getuid()
+	if sudoUser := os.Getenv("SUDO_UID"); sudoUser != "" {
+		if id, err := strconv.Atoi(sudoUser); err == nil {
+			realUID = id
 		}
 	}
 
-	// Start DHCP server on TAP interface
-	if err := startDHCP(cfg.TapName, cfg.HostIP, cfg.GuestIP); err != nil {
-		logger.Warn("DHCP server failed (may need root): %v", err)
+	// Check if TAP already exists and is configured
+	if tapDeviceExists(tapName) {
+		fmt.Printf("TAP device %s already exists\n", tapName)
+	} else {
+		// Create TAP owned by real user
+		fmt.Printf("Creating TAP device %s (owned by UID %d)...\n", tapName, realUID)
+		if err := runCmdSilent("ip", "tuntap", "add", "dev", tapName, "mode", "tap", "user", strconv.Itoa(realUID)); err != nil {
+			return fmt.Errorf("failed to create TAP device: %w", err)
+		}
+		if err := runCmdSilent("ip", "addr", "add", hostIP+"/24", "dev", tapName); err != nil {
+			return fmt.Errorf("failed to configure TAP IP: %w", err)
+		}
+		if err := runCmdSilent("ip", "link", "set", tapName, "up"); err != nil {
+			return fmt.Errorf("failed to bring up TAP device: %w", err)
+		}
+		fmt.Println("TAP device created")
+	}
+
+	// Enable IP forwarding
+	fmt.Println("Enabling IP forwarding...")
+	runCmdSilent("sysctl", "-w", "net.ipv4.ip_forward=1")
+
+	// Setup NAT
+	hostIface := FindHostInterface()
+	if hostIface == "" {
+		logger.Warn("No host interface found for NAT")
+	} else {
+		fmt.Printf("Setting up NAT (-> %s)...\n", hostIface)
+		setupNAT(tapName, hostIface)
+	}
+
+	// Grant /dev/kvm access
+	uidStr := strconv.Itoa(realUID)
+	fmt.Printf("Granting /dev/kvm access to UID %s...\n", uidStr)
+	if err := runCmdSilent("setfacl", "-m", "u:"+uidStr+":rw", "/dev/kvm"); err != nil {
+		logger.Warn("Failed to set /dev/kvm ACL (setfacl may not be installed): %v", err)
+		fmt.Println("  Tip: You can also add yourself to the kvm group: sudo usermod -aG kvm $USER")
+	}
+
+	// Ensure /dev/net/tun is accessible
+	fmt.Println("Ensuring /dev/net/tun is accessible...")
+	runCmdSilent("chmod", "0666", "/dev/net/tun")
+
+	// Start DHCP server (dnsmasq)
+	fmt.Println("Starting DHCP server...")
+	if err := startDHCP(tapName, hostIP, "172.16.0.2"); err != nil {
+		return fmt.Errorf("failed to start DHCP server: %w", err)
+	}
+	fmt.Println("DHCP server started")
+
+	fmt.Println()
+	fmt.Println("=== Network setup complete! ===")
+	fmt.Println()
+	fmt.Println("You can now run without root:")
+	fmt.Printf("  ./groot vmm run --kernel <kernel> --rootfs <rootfs> --net --tap %s\n", tapName)
+	fmt.Println()
+	fmt.Println("To clean up:")
+	fmt.Println("  sudo ./groot vmm rm-network")
+	return nil
+}
+
+func tapDeviceExists(tapName string) bool {
+	cmd := exec.Command("ip", "link", "show", tapName)
+	return cmd.Run() == nil
+}
+
+func TapDeviceAccessible(tapName string) bool {
+	cmd := exec.Command("ip", "addr", "show", tapName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(output), "172.16.0")
+}
+
+func tapExistsAndConfigured(tapName, prefix string) bool {
+	return TapDeviceAccessible(tapName)
+}
+
+func runCmdSilent(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		logger.Debug("Command failed: %s %s: %s", name, strings.Join(args, " "), strings.TrimSpace(string(output)))
+		return fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+func CleanupNetwork() error {
+	tapName := "groot-tap0"
+
+	if os.Getuid() != 0 {
+		return fmt.Errorf("cleanup-network requires root privileges\nPlease run: sudo ./groot vmm rm-network")
+	}
+
+	// Check if TAP exists
+	if !tapDeviceExists(tapName) {
+		fmt.Printf("TAP device %s does not exist\n", tapName)
+		return nil
+	}
+
+	// Kill dnsmasq
+	fmt.Println("Stopping dnsmasq...")
+	if pid, err := os.ReadFile("/tmp/groot-dnsmasq.pid"); err == nil {
+		runCmdSilent("kill", strings.TrimSpace(string(pid)))
+		os.Remove("/tmp/groot-dnsmasq.pid")
+	}
+	os.Remove("/tmp/groot-dnsmasq.leases")
+
+	// Remove NAT rules
+	fmt.Println("Removing NAT rules...")
+	removeNAT(tapName)
+
+	// Remove TAP device
+	fmt.Printf("Removing TAP device %s...\n", tapName)
+	if err := runCmdSilent("ip", "link", "set", tapName, "down"); err != nil {
+		logger.Debug("Failed to bring down TAP: %v", err)
+	}
+	if err := runCmdSilent("ip", "tuntap", "del", "dev", tapName, "mode", "tap"); err != nil {
+		return fmt.Errorf("failed to remove TAP device: %w", err)
+	}
+
+	// Restore /dev/kvm permissions (remove ACL)
+	fmt.Println("Restoring /dev/kvm permissions...")
+	realUID := os.Getuid()
+	if sudoUser := os.Getenv("SUDO_UID"); sudoUser != "" {
+		if id, err := strconv.Atoi(sudoUser); err == nil {
+			realUID = id
+		}
+	}
+	uid := strconv.Itoa(realUID)
+	runCmdSilent("setfacl", "-x", "u:"+uid, "/dev/kvm")
+
+	fmt.Println()
+	fmt.Println("=== Network cleaned up! ===")
+	return nil
+}
+
+func SetupTapDevice(cfg NetworkConfig) error {
+	// Check if TAP already exists and is configured
+	if TapDeviceAccessible(cfg.TapName) {
+		logger.Debug("TAP device %s already exists, reusing", cfg.TapName)
+	} else {
+		if err := createTapDevice(cfg.TapName); err != nil {
+			return err
+		}
+
+		if err := configureTapIP(cfg.TapName, cfg.HostIP, cfg.MaskLen); err != nil {
+			CleanupTapDevice(cfg.TapName)
+			return err
+		}
+
+		if err := enableIPForwarding(); err != nil {
+			logger.Warn("IP forwarding failed (may need root): %v", err)
+		}
+
+		if cfg.HostIface != "" {
+			if err := setupNAT(cfg.TapName, cfg.HostIface); err != nil {
+				logger.Warn("NAT setup failed (may need root): %v", err)
+			}
+		}
+	}
+
+	// Always ensure DHCP server is running (even if TAP was pre-created)
+	if !dnsmasqIsRunning() {
+		if err := startDHCP(cfg.TapName, cfg.HostIP, cfg.GuestIP); err != nil {
+			logger.Warn("DHCP server failed (may need root): %v", err)
+		}
+	} else {
+		logger.Debug("dnsmasq already running")
 	}
 
 	return nil
@@ -176,6 +341,12 @@ func startDHCP(tapName, hostIP, guestIP string) error {
 		"-q",
 	}
 
+	// Kill existing dnsmasq first to avoid duplicates
+	if pid, err := os.ReadFile("/tmp/groot-dnsmasq.pid"); err == nil {
+		runCmdSilent("kill", strings.TrimSpace(string(pid)))
+		os.Remove("/tmp/groot-dnsmasq.pid")
+	}
+
 	// Try dnsmasq without sudo first
 	cmd := exec.Command("dnsmasq", args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -192,6 +363,15 @@ func startDHCP(tapName, hostIP, guestIP string) error {
 
 	logger.Debug("DHCP server started on %s", tapName)
 	return nil
+}
+
+func dnsmasqIsRunning() bool {
+	if pid, err := os.ReadFile("/tmp/groot-dnsmasq.pid"); err == nil {
+		pidStr := strings.TrimSpace(string(pid))
+		cmd := exec.Command("kill", "-0", pidStr)
+		return cmd.Run() == nil
+	}
+	return false
 }
 
 func setupNAT(tapName, hostIface string) error {
