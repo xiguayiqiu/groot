@@ -47,7 +47,6 @@ require (
 	github.com/rootless-containers/rootlesskit/v2 v2.3.6 // indirect
 	github.com/rootless-containers/slirp4netns v1.3.5 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
-	github.com/seccomp/libseccomp-golang v0.12.0 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/urfave/cli v1.22.17 // indirect
 	github.com/vishvananda/netlink v1.3.1 // indirect
