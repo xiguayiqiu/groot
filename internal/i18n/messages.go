@@ -411,6 +411,10 @@ var messages = map[string]map[Lang]string{
 		LangZH: "proot 运行失败: %v",
 		LangEN: "proot failed: %v",
 	},
+	"proot.perm_owned_by_root": {
+		LangZH: "⚠  rootfs 属于 root，非 root 用户无法写入。请先执行:",
+		LangEN: "⚠  rootfs is owned by root, non-root user cannot write. Run this first:",
+	},
 
 	// ==========================================
 	// Alpine Proot (internal/proot/alpine-proot.go)
@@ -1518,5 +1522,174 @@ var messages = map[string]map[Lang]string{
 	"cleanup.machine_id_fail": {
 		LangZH: "清理 /etc/machine-id 失败: %v",
 		LangEN: "Failed to clean /etc/machine-id: %v",
+	},
+
+	// ==========================================
+	// VMM (internal/vmm/vmm.go)
+	// ==========================================
+
+	"cli.usage.vmm": {
+		LangZH: "VMM 模式：使用 Firecracker 启动 microVM（需要 /dev/kvm）",
+		LangEN: "VMM mode: Launch microVM with Firecracker (requires /dev/kvm)",
+	},
+	"cli.vmm.kernel": {
+		LangZH: "指定内核路径（默认: kernel/amd64/vmlinux.bin）",
+		LangEN: "Specify kernel path (default: kernel/amd64/vmlinux.bin)",
+	},
+	"cli.vmm.rootfs": {
+		LangZH: "指定 rootfs 镜像路径（默认: rootfs/rootfs.ext4）",
+		LangEN: "Specify rootfs image path (default: rootfs/rootfs.ext4)",
+	},
+	"cli.vmm.mem": {
+		LangZH: "指定内存大小（MB，默认: 256）",
+		LangEN: "Specify memory size in MB (default: 256)",
+	},
+	"cli.vmm.cpus": {
+		LangZH: "指定 CPU 核心数（默认: 2）",
+		LangEN: "Specify CPU cores (default: 2)",
+	},
+	"cli.vmm.net": {
+		LangZH: "启用网络支持（需要 root 权限创建 TAP 设备）",
+		LangEN: "Enable network support (requires root for TAP device)",
+	},
+	"cli.vmm.tap": {
+		LangZH: "指定 TAP 设备名称（默认: groot-tap0）",
+		LangEN: "Specify TAP device name (default: groot-tap0)",
+	},
+	"cli.vmm.host_ip": {
+		LangZH: "指定主机端 IP（默认: 172.16.0.1）",
+		LangEN: "Specify host IP (default: 172.16.0.1)",
+	},
+	"cli.vmm.guest_ip": {
+		LangZH: "指定虚拟机端 IP（默认: 172.16.0.2）",
+		LangEN: "Specify guest IP (default: 172.16.0.2)",
+	},
+	"vmm.starting": {
+		LangZH: "正在启动 microVM...",
+		LangEN: "Starting microVM...",
+	},
+	"vmm.started": {
+		LangZH: "microVM 已启动，按 Ctrl+A 然后 x 退出",
+		LangEN: "microVM started, press Ctrl+A then x to exit",
+	},
+	"vmm.exited": {
+		LangZH: "microVM 已退出",
+		LangEN: "microVM exited",
+	},
+	"vmm.error.start": {
+		LangZH: "启动 microVM 失败: %v",
+		LangEN: "Failed to start microVM: %v",
+	},
+	"vmm.error.create": {
+		LangZH: "创建 machine 失败: %v",
+		LangEN: "Failed to create machine: %v",
+	},
+	"vmm.error.kernel_not_found": {
+		LangZH: "内核文件不存在: %s",
+		LangEN: "Kernel file not found: %s",
+	},
+	"vmm.error.rootfs_not_found": {
+		LangZH: "rootfs 文件不存在: %s",
+		LangEN: "Rootfs file not found: %s",
+	},
+	"vmm.error.firecracker_not_found": {
+		LangZH: "未找到 firecracker 可执行文件，请从 https://github.com/firecracker-microvm/firecracker/releases 安装",
+		LangEN: "firecracker binary not found, install from https://github.com/firecracker-microvm/firecracker/releases",
+	},
+	"vmm.error.socket": {
+		LangZH: "清理旧 socket 失败: %v",
+		LangEN: "Failed to clean old socket: %v",
+	},
+	"vmm.error.network": {
+		LangZH: "网络配置失败: %v",
+		LangEN: "Network setup failed: %v",
+	},
+	"vmm.network.setup": {
+		LangZH: "正在配置网络...",
+		LangEN: "Configuring network...",
+	},
+	"vmm.network.tap_created": {
+		LangZH: "TAP 设备已创建: %s",
+		LangEN: "TAP device created: %s",
+	},
+	"vmm.network.tap_cleanup": {
+		LangZH: "正在清理 TAP 设备...",
+		LangEN: "Cleaning up TAP device...",
+	},
+	"vmm.network.nat_setup": {
+		LangZH: "正在配置 NAT...",
+		LangEN: "Configuring NAT...",
+	},
+	"cli.vmm.download_kernel": {
+		LangZH: "从 Firecracker S3 下载官方内核",
+		LangEN: "Download official Firecracker kernel from S3",
+	},
+	"cli.vmm.download_all": {
+		LangZH: "下载所有可用内核（配合 --download-kernel 使用）",
+		LangEN: "Download all available kernels (use with --download-kernel)",
+	},
+	"cli.vmm.arch": {
+		LangZH: "架构：x86_64、aarch64 或 all（默认: 当前架构）",
+		LangEN: "Architecture: x86_64, aarch64, or all (default: current)",
+	},
+	"cli.vmm.kernel_args": {
+		LangZH: "自定义内核启动参数（覆盖默认值）",
+		LangEN: "Custom kernel boot arguments (overrides default)",
+	},
+	"vmm.download.fetching": {
+		LangZH: "正在从 Firecracker S3 获取可用内核...",
+		LangEN: "Fetching available kernels from Firecracker S3...",
+	},
+	"vmm.download.table_header": {
+		LangZH: "可用内核（架构: %s）:",
+		LangEN: "Available kernels (arch: %s):",
+	},
+	"vmm.download.no_kernels": {
+		LangZH: "未找到内核",
+		LangEN: "No kernels found",
+	},
+	"vmm.download.prompt": {
+		LangZH: "输入要下载的内核编号（例如: 1,3 或 2-4 或 'all'）: ",
+		LangEN: "Enter kernel numbers to download (e.g., 1,3 or 2-4 or 'all'): ",
+	},
+	"vmm.download.cancelled": {
+		LangZH: "已取消。",
+		LangEN: "Cancelled.",
+	},
+	"vmm.download.downloading_all": {
+		LangZH: "正在下载全部 %d 个内核...",
+		LangEN: "Downloading all %d kernels...",
+	},
+	"vmm.download.downloading": {
+		LangZH: "正在下载 %d 个内核...",
+		LangEN: "Downloading %d kernel(s)...",
+	},
+	"vmm.download.skip": {
+		LangZH: "  [跳过] %s 已存在",
+		LangEN: "  [SKIP] %s already exists",
+	},
+	"vmm.download.progress": {
+		LangZH: "  [下载] %s (%s)...",
+		LangEN: "  [DOWN] %s (%s)...",
+	},
+	"vmm.download.success": {
+		LangZH: "  [完成] %s → %s",
+		LangEN: "  [ OK ] %s → %s",
+	},
+	"vmm.download.error": {
+		LangZH: "  [错误] %v",
+		LangEN: "  [ERR] %v",
+	},
+	"vmm.download.done": {
+		LangZH: "完成。%d/%d 个下载成功。",
+		LangEN: "Done. %d/%d downloaded successfully.",
+	},
+	"vmm.download.usage_hint": {
+		LangZH: "使用方法:\n  sudo ./groot vmm --kernel kernel/%s/%s --rootfs rootfs/rootfs.ext4",
+		LangEN: "To use a kernel:\n  sudo ./groot vmm --kernel kernel/%s/%s --rootfs rootfs/rootfs.ext4",
+	},
+	"vmm.download.legend": {
+		LangZH: "说明: QS = 官方预编译, CI = Firecracker CI 最新构建",
+		LangEN: "Legend: QS = Quickstart (official), CI = Firecracker CI (latest build)",
 	},
 }

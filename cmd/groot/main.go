@@ -19,12 +19,13 @@ import (
 	"groot/internal/proot"
 	"groot/internal/rootless"
 	"groot/internal/termux"
+	"groot/internal/vmm"
 
 	"github.com/urfave/cli/v2"
 )
 
 const (
-	version = "0.3.2.3"
+	version = "0.4.0"
 )
 
 func detectDistro() string {
@@ -127,6 +128,118 @@ func main() {
 		Copyright:   i18n.T("cli.copyright"),
 		HideVersion: true,
 		Commands: []*cli.Command{
+			{
+				Name:  "vmm",
+				Usage: i18n.T("cli.usage.vmm"),
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "kernel",
+						Aliases: []string{"k"},
+						Usage:   i18n.T("cli.vmm.kernel"),
+					},
+					&cli.StringFlag{
+						Name:    "rootfs",
+						Aliases: []string{"r"},
+						Usage:   i18n.T("cli.vmm.rootfs"),
+					},
+					&cli.StringFlag{
+						Name:  "mem",
+						Usage: i18n.T("cli.vmm.mem"),
+						Value: "256",
+					},
+					&cli.IntFlag{
+						Name:  "cpus",
+						Usage: i18n.T("cli.vmm.cpus"),
+						Value: 2,
+					},
+					&cli.BoolFlag{
+						Name:    "net",
+						Aliases: []string{"network"},
+						Usage:   i18n.T("cli.vmm.net"),
+					},
+					&cli.StringFlag{
+						Name:  "tap",
+						Usage: i18n.T("cli.vmm.tap"),
+						Value: "groot-tap0",
+					},
+					&cli.StringFlag{
+						Name:  "host-ip",
+						Usage: i18n.T("cli.vmm.host_ip"),
+						Value: "172.16.0.1",
+					},
+				&cli.StringFlag{
+					Name:  "guest-ip",
+					Usage: i18n.T("cli.vmm.guest_ip"),
+					Value: "172.16.0.2",
+				},
+				&cli.BoolFlag{
+					Name:  "download-kernel",
+					Usage: i18n.T("cli.vmm.download_kernel"),
+				},
+				&cli.BoolFlag{
+					Name:  "all",
+					Usage: i18n.T("cli.vmm.download_all"),
+				},
+				&cli.StringFlag{
+					Name:  "arch",
+					Usage: i18n.T("cli.vmm.arch"),
+				},
+				&cli.StringFlag{
+					Name:  "kernel-args",
+					Usage: i18n.T("cli.vmm.kernel_args"),
+				},
+			},
+			Action: func(cCtx *cli.Context) error {
+				// Handle --download-kernel flag
+				if cCtx.Bool("download-kernel") {
+					return vmm.DownloadKernel(cCtx.Bool("all"), cCtx.String("arch"))
+				}
+
+				cfg := vmm.DefaultConfig()
+
+					if k := cCtx.String("kernel"); k != "" {
+						cfg.KernelPath = k
+					}
+					if r := cCtx.String("rootfs"); r != "" {
+						cfg.RootfsPath = r
+					}
+					if m := cCtx.String("mem"); m != "" {
+						var memMB int
+						if _, err := fmt.Sscanf(m, "%d", &memMB); err == nil && memMB > 0 {
+							cfg.MemSizeMB = memMB
+						}
+					}
+					cfg.Vcpus = cCtx.Int("cpus")
+					if k := cCtx.String("kernel-args"); k != "" {
+						cfg.KernelArgs = k
+					}
+					cfg.EnableNet = cCtx.Bool("net")
+					cfg.TapDevice = cCtx.String("tap")
+					cfg.HostIP = cCtx.String("host-ip")
+					cfg.GuestIP = cCtx.String("guest-ip")
+
+					if cfg.EnableNet && !permission.IsRoot() {
+						return fmt.Errorf("network mode requires root privileges\nPlease run: sudo %s vmm %s",
+							os.Args[0], strings.Join(os.Args[2:], " "))
+					}
+
+					if cfg.EnableNet {
+						netCfg := vmm.NetworkConfig{
+							TapName:   cfg.TapDevice,
+							HostIP:    cfg.HostIP,
+							GuestIP:   cfg.GuestIP,
+							MaskLen:   24,
+							HostIface: vmm.FindHostInterface(),
+						}
+						if err := vmm.SetupTapDevice(netCfg); err != nil {
+							return fmt.Errorf("network setup failed: %w", err)
+						}
+						defer vmm.CleanupTapDevice(cfg.TapDevice)
+					}
+
+					return vmm.Run(cfg)
+				},
+			},
 			{
 				Name:  "pm",
 				Usage: i18n.T("cli.usage.pm"),

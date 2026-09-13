@@ -7,7 +7,7 @@ build/
 *.swp
 *.swo
 *~
-
+kernel/
 # rootfs 文件（包含下载的镜像和运行时目录）
 rootfs/
 downloads/
