@@ -207,7 +207,9 @@ var messages = map[string]map[Lang]string{
 		LangEN: "Using text interactive mode",
 	},
 
+	// ==========================================
 	// 发行版列表
+	// ==========================================
 	"cli.distro.supported": {
 		LangZH: "发行版",
 		LangEN: "Distro",
@@ -373,6 +375,10 @@ var messages = map[string]map[Lang]string{
 	// Proot (internal/proot/proot.go)
 	// ==========================================
 
+	"proot.abs_path_fail": {
+		LangZH: "转换绝对路径失败",
+		LangEN: "Failed to convert absolute path",
+	},
 	"proot.start": {
 		LangZH: "开始 proot 模式，rootfs 路径: %s",
 		LangEN: "Starting proot mode, rootfs: %s",
@@ -1403,6 +1409,11 @@ var messages = map[string]map[Lang]string{
 	"env.loaded": {
 		LangZH: "环境变量加载完成，共 %d 个",
 		LangEN: "Environment variables loaded, total %d",
+	},
+
+	"env.profile_loaded_shell": {
+		LangZH: "通过 login shell 加载 profile 配置，共 %d 个变量",
+		LangEN: "Loaded profile via login shell, %d variables",
 	},
 
 	// ==========================================

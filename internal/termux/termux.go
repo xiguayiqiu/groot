@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"groot/internal/slogan"
+
 	"groot/internal/i18n"
 	"groot/internal/logger"
 )
@@ -225,7 +227,7 @@ func EnsureChrootInstalled() error {
 
 // ShellBanner 返回启动 shell 前的横幅命令（打印彩色广告后 exec shell）。
 func ShellBanner(shell string) string {
-	banner := "如果你喜欢请前往 gyscan.space 下载 gyscan 吧～"
+	bannerCmd := slogan.GetBannerCmd()
 	// 带颜色转义序列的 printf，兼容 busybox sh
-	return fmt.Sprintf("printf '\\033[36m[Groot]\\033[0m \\033[32m%s\\033[0m\\n'; exec %s -l", banner, shell)
+	return bannerCmd + "; exec " + shell + " -l"
 }

@@ -13,9 +13,37 @@ import (
 	"groot/internal/env"
 	"groot/internal/i18n"
 	"groot/internal/logger"
+	"groot/internal/slogan"
 	"groot/internal/termux"
 	"groot/internal/usercheck"
 )
+
+// validateShellPath 验证 shell 路径是否安全
+func validateShellPath(shell string) bool {
+	if shell == "" {
+		return false
+	}
+	if strings.Contains(shell, "..") {
+		return false
+	}
+	// 只允许安全字符
+	for _, c := range shell {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '/' || c == '_' || c == '-' || c == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+// truncateHostname 截断 hostname 到内核限制
+func truncateHostname(hostname string) string {
+	const maxHostname = 63
+	if len(hostname) > maxHostname {
+		return hostname[:maxHostname]
+	}
+	return hostname
+}
 
 // Run 运行 proot 模式 - 只使用系统的 proot 命令
 func Run(rootfsPath string, customShell string) error {
@@ -33,7 +61,7 @@ func Run(rootfsPath string, customShell string) error {
 	if !filepath.IsAbs(rootfsPath) {
 		abs, err := filepath.Abs(rootfsPath)
 		if err != nil {
-			return fmt.Errorf("转换绝对路径失败: %w", err)
+			return fmt.Errorf("%s: %w", i18n.T("proot.abs_path_fail"), err)
 		}
 		absRootfsPath = abs
 	}
@@ -59,6 +87,12 @@ func Run(rootfsPath string, customShell string) error {
 	// 确定要使用的 shell - 与 chroot 模式相同的逻辑
 	shell := findShell(absRootfsPath, customShell, userInfo.Shell)
 
+	// 验证 shell 路径安全性
+	if !validateShellPath(shell) {
+		logger.Warn("shell 路径不安全: %s, 回退到 /bin/sh", shell)
+		shell = "/bin/sh"
+	}
+
 	// 终极方案：完整修复整个 rootfs 权限，proot 里的 root = 宿主机的当前用户
 	currentUid := os.Getuid()
 	currentGid := os.Getgid()
@@ -73,15 +107,15 @@ func Run(rootfsPath string, customShell string) error {
 
 	// 获取正确的 hostname
 	hostname := env.GetHostname(absRootfsPath, "groot-proot")
+	hostname = truncateHostname(hostname)
 	logger.Debug("使用主机名: %s", hostname)
 
 	// 构建 proot 命令参数 - 以 login shell 方式启动，自动 source /etc/profile
 	// 启动前打印彩色广告横幅
 	// 设置 ENV=/etc/profile 让 bash 在非登录模式下也读取 profile
 	// 使用 -l 参数让 bash 作为 login shell 启动，读取 /etc/profile, ~/.bash_profile, ~/.profile
-	execCmd := "export ENV=/etc/profile; printf '\\033[36m[Groot]\\033[0m \\033[32m如果你喜欢groot的话，请前往 https://gyscan.space 下载gyscan吧 [qwq]\\033[0m\\n'; exec " + shell + " -l"
-	var args []string
-	args = []string{
+	execCmd := "export ENV=/etc/profile; " + slogan.GetBannerCmd() + "; exec " + shell + " -l"
+	args := []string{
 		"--kill-on-exit",
 		"-0",
 		"-r", absRootfsPath,
@@ -115,7 +149,9 @@ func Run(rootfsPath string, customShell string) error {
 
 	// 信号转发
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGWINCH)
+	defer signal.Stop(sigChan)
+	defer close(sigChan)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("%s", i18n.Tf("proot.start_fail", err))
@@ -125,7 +161,9 @@ func Run(rootfsPath string, customShell string) error {
 		for sig := range sigChan {
 			if cmd.Process != nil {
 				logger.Debug("转发信号 %v 给 proot", sig)
-				cmd.Process.Signal(sig)
+				if err := cmd.Process.Signal(sig); err != nil {
+					logger.Debug("信号转发失败: %v", err)
+				}
 			}
 		}
 	}()
@@ -136,9 +174,6 @@ func Run(rootfsPath string, customShell string) error {
 		}
 		return fmt.Errorf("%s", i18n.Tf("proot.run_fail", err))
 	}
-
-	signal.Stop(sigChan)
-	close(sigChan)
 
 	return nil
 }
@@ -166,10 +201,14 @@ func fixUltimatePermissions(rootfsPath string, uid, gid int) {
 			processedInodes[inodeKey] = true
 		}
 		// 设置所有者为当前用户
-		os.Chown(path, uid, gid)
+		if err := os.Chown(path, uid, gid); err != nil {
+			logger.Debug("chown %s failed: %v", path, err)
+		}
 		// 设置权限
 		if info.IsDir() {
-			os.Chmod(path, 0755)
+			if err := os.Chmod(path, 0755); err != nil {
+				logger.Debug("chmod %s failed: %v", path, err)
+			}
 		} else {
 			// 检查是否是可执行文件
 			mode := info.Mode()
@@ -187,9 +226,13 @@ func fixUltimatePermissions(rootfsPath string, uid, gid int) {
 					strings.HasPrefix(relPath, "/usr/lib64/")
 			}
 			if mode&0111 != 0 || isExecDir {
-				os.Chmod(path, 0755)
+				if err := os.Chmod(path, 0755); err != nil {
+					logger.Debug("chmod %s failed: %v", path, err)
+				}
 			} else {
-				os.Chmod(path, 0644)
+				if err := os.Chmod(path, 0644); err != nil {
+					logger.Debug("chmod %s failed: %v", path, err)
+				}
 			}
 		}
 		return nil
@@ -200,26 +243,31 @@ func fixUltimatePermissions(rootfsPath string, uid, gid int) {
 func findShell(rootfsPath, customShell, defaultShell string) string {
 	// 优先检查用户指定的 shell
 	if customShell != "" {
-		shellPath := customShell
-		if customShell[0] != '/' {
-			shellPath = "/" + customShell
-		}
-		fullPath := filepath.Join(rootfsPath, shellPath[1:])
-		if _, err := os.Stat(fullPath); err == nil {
-			return shellPath
-		}
-		// 尝试常见的 shell 路径
-		for _, path := range []string{"/bin/" + customShell, "/usr/bin/" + customShell} {
-			fullPath := filepath.Join(rootfsPath, path[1:])
+		// 安全检查：防止路径遍历
+		if strings.Contains(customShell, "..") {
+			logger.Warn("customShell 包含路径遍历: %s", customShell)
+		} else {
+			shellPath := customShell
+			if customShell[0] != '/' {
+				shellPath = "/" + customShell
+			}
+			fullPath := filepath.Join(rootfsPath, shellPath)
 			if _, err := os.Stat(fullPath); err == nil {
-				return path
+				return shellPath
+			}
+			// 尝试常见的 shell 路径
+			for _, path := range []string{"/bin/" + customShell, "/usr/bin/" + customShell} {
+				fullPath := filepath.Join(rootfsPath, path)
+				if _, err := os.Stat(fullPath); err == nil {
+					return path
+				}
 			}
 		}
 	}
 
 	// 使用用户默认 shell
 	if defaultShell != "" && defaultShell != "/usr/bin/nologin" {
-		fullPath := filepath.Join(rootfsPath, defaultShell[1:])
+		fullPath := filepath.Join(rootfsPath, defaultShell)
 		if _, err := os.Stat(fullPath); err == nil {
 			return defaultShell
 		}
@@ -228,7 +276,7 @@ func findShell(rootfsPath, customShell, defaultShell string) string {
 	// 按优先级查找可用的 shell
 	shells := []string{"/bin/dash", "/bin/bash", "/bin/sh", "/usr/bin/bash", "/usr/bin/sh"}
 	for _, s := range shells {
-		fullPath := filepath.Join(rootfsPath, s[1:])
+		fullPath := filepath.Join(rootfsPath, s)
 		if _, err := os.Stat(fullPath); err == nil {
 			return s
 		}

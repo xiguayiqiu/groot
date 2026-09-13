@@ -9,7 +9,7 @@ set -e
 
 PROJECT_NAME="groot"
 OUTPUT_DIR="build"
-VERSION="0.3.2.2"
+VERSION="0.3.2.3"
 PACKAGE_LICENSE="MIT"
 PACKAGE_URL="https://gyscan.space"
 PACKAGE_DESCRIPTION="Go 版双模式隔离工具（chroot/proot）- 轻量级 Linux 容器环境"

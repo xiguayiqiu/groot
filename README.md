@@ -189,10 +189,10 @@ go build -o groot ./cmd/groot
 
 生成的安装包在 `build/` 目录下：
 
-- `groot_0.3_amd64.deb` — Debian/Ubuntu/Kali/Termux
-- `groot-0.3-1.x86_64.rpm` — Fedora/CentOS/RHEL
-- `groot-0.3-1-x86_64.pkg.tar.zst` — Arch/Manjaro
-- `groot-0.3.apk` — Alpine Linux
+- `groot_0.3.2.3_amd64.deb` — Debian/Ubuntu/Kali/Termux
+- `groot-0.3.2.3-1.x86_64.rpm` — Fedora/CentOS/RHEL
+- `groot-0.3.2.3-1-x86_64.pkg.tar.zst` — Arch/Manjaro
+- `groot-0.3.2.3.apk` — Alpine Linux
 
 ```bash
 ./groot --help
@@ -349,7 +349,28 @@ sudo ./groot -k /path/to/rootfs
 
 ## 📋 更新日志
 
-### 2026-9.12 — V0.3.2.2 (当前版本)
+### 2026-9-13 — V0.3.2.3 (当前版本)
+
+#### 🔧 修复与优化
+
+- **修复 fish shell 启动失败**：fish 不支持 bash 语法的 `if [ ... ]; then ... fi`，添加非 POSIX shell 检测（fish/csh/tcsh/ksh），跳过 bash 特定的 fixScript 和 pacmanWrapper
+- **修复 chroot 命令注入风险**：添加 `validateShellPath()` 正则验证 + `sanitizeShellArg()` 清理参数
+- **修复 proot 命令注入风险**：添加 `validateShellPath()` 白名单验证 shell 路径
+- **修复 proot 路径穿越风险**：添加 `..` 检查，防止 `../../etc/shadow` 类攻击逃逸出 rootfs
+- **修复 ptrace 数据竞争**：`tracee.Exited` 从 `bool` 改用 `atomic.Bool`，消除 goroutine 间的数据竞争
+- **修复 binding.go 路径匹配逻辑错误**：`/` 继承绑定不再优先匹配所有路径，改为按 GuestPath 长度降序排序，优先匹配最长前缀
+- **修复 SIGTRAP 后信号传递错误**：处理 SIGTRAP 后传递 `signal 0` 而非 `SIGTRAP` 自身，避免进程收到额外信号
+- **修复 signal.Stop 执行时机**：使用 `defer signal.Stop()` + `defer close()` 确保清理一定执行
+- **修复网络清理重复调用**：合并为一处，用 `defer` 确保执行
+- **修复 network sleep 竞态**：改为轮询 `/proc/<pid>/ns/net` 等待网络命名空间就绪
+- **修复 Mknod 返回值忽略**：添加日志记录设备节点创建失败
+- **修复 os.Chown/Chmod 返回值忽略**：添加 `logger.Debug()` 记录权限修改失败
+- **添加 hostname 长度验证**：截断到内核限制 63 字节
+- **删除 binding.go 死代码**：移除未使用的 `cleanPath()` 和 `isPrefix()` 函数
+- **统一路径拼接**：chroot.go 中统一使用 `filepath.Join()` 替代字符串拼接
+- **添加 SIGWINCH 信号转发**：终端窗口大小改变时正确转发给子进程
+
+### 2026-9-12 — V0.3.2.2
 
 #### 🌍 国际化 (i18n)
 

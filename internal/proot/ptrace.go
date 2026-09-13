@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"syscall"
 
 	"groot/internal/logger"
@@ -18,7 +19,7 @@ type Tracee struct {
 	Translator  *PathTranslator
 	Env         []string
 	CustomShell string
-	Exited      bool
+	Exited      atomic.Bool
 }
 
 type PTraceManager struct {
@@ -64,7 +65,7 @@ func (pm *PTraceManager) Run() error {
 
 	go func() {
 		cmd.Wait()
-		tracee.Exited = true
+		tracee.Exited.Store(true)
 	}()
 
 	return pm.trace(tracee)
@@ -72,7 +73,7 @@ func (pm *PTraceManager) Run() error {
 
 func (pm *PTraceManager) trace(tracee *Tracee) error {
 	for {
-		if tracee.Exited {
+		if tracee.Exited.Load() {
 			break
 		}
 
@@ -100,13 +101,17 @@ func (pm *PTraceManager) trace(tracee *Tracee) error {
 			sig := status.StopSignal()
 			logger.Debug("Tracee stopped: %v", sig)
 
+			// 确定用于 PtraceCont 的信号
+			// SIGTRAP 处理后不传递额外信号，其他信号正常传递
+			continueSignal := int(sig)
 			if sig == syscall.SIGTRAP {
 				if err := pm.handleSyscall(tracee); err != nil {
 					logger.Warn("Syscall handling failed: %v", err)
 				}
+				continueSignal = 0 // 不传递额外信号
 			}
 
-			if err := syscall.PtraceCont(tracee.Pid, int(sig)); err != nil {
+			if err := syscall.PtraceCont(tracee.Pid, continueSignal); err != nil {
 				return fmt.Errorf("ptrace cont failed: %w", err)
 			}
 		}
@@ -158,6 +163,10 @@ func getSyscallArg(regs *syscall.PtraceRegs, idx int) uintptr {
 }
 
 func readString(pid int, addr uintptr, maxLen int) string {
+	if maxLen <= 0 || maxLen > 4096 {
+		return ""
+	}
+
 	buf := make([]byte, maxLen)
 	n, err := syscall.PtracePeekData(pid, addr, buf)
 	if err != nil {

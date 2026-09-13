@@ -17,13 +17,14 @@ import (
 	"groot/internal/network"
 	"groot/internal/permission"
 	"groot/internal/proot"
+	"groot/internal/rootless"
 	"groot/internal/termux"
 
 	"github.com/urfave/cli/v2"
 )
 
 const (
-	version = "0.3.2.2"
+	version = "0.3.2.3"
 )
 
 func detectDistro() string {
@@ -80,29 +81,36 @@ func main() {
 
 	// 处理内部子命令和版本参数
 	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "chroot-child":
-			if len(os.Args) < 3 {
-				fmt.Fprintf(os.Stderr, "%s\n", i18n.T("cli.error.child_needs_rootfs"))
-				os.Exit(1)
-			}
-			customShell := ""
-			customUser := ""
-			netMode := ""
-			if len(os.Args) >= 4 {
-				customShell = os.Args[3]
-			}
-			if len(os.Args) >= 5 {
-				customUser = os.Args[4]
-			}
-			if len(os.Args) >= 6 {
-				netMode = os.Args[5]
-			}
-			if err := chroot.ChildMain(os.Args[2], customShell, customUser, netMode); err != nil {
-				fmt.Fprintf(os.Stderr, "%s\n", i18n.Tf("cli.error.generic", err))
-				os.Exit(1)
-			}
-			return
+	switch os.Args[1] {
+	case "chroot-child":
+		if len(os.Args) < 3 {
+			fmt.Fprintf(os.Stderr, "%s\n", i18n.T("cli.error.child_needs_rootfs"))
+			os.Exit(1)
+		}
+		customShell := ""
+		customUser := ""
+		netMode := ""
+		if len(os.Args) >= 4 {
+			customShell = os.Args[3]
+		}
+		if len(os.Args) >= 5 {
+			customUser = os.Args[4]
+		}
+		if len(os.Args) >= 6 {
+			netMode = os.Args[5]
+		}
+		if err := chroot.ChildMain(os.Args[2], customShell, customUser, netMode); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", i18n.Tf("cli.error.generic", err))
+			os.Exit(1)
+		}
+		return
+
+	case "rootless-child":
+		if err := rootless.RunChild(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", i18n.Tf("cli.error.generic", err))
+			os.Exit(1)
+		}
+		return
 
 		case "-v", "--version":
 			fmt.Printf("groot version %s\n", version)

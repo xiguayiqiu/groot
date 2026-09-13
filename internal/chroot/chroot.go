@@ -6,9 +6,11 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"groot/internal/cleanup"
 	"groot/internal/env"
@@ -17,8 +19,50 @@ import (
 	"groot/internal/mount"
 	"groot/internal/network"
 	"groot/internal/permission"
+	"groot/internal/slogan"
 	"groot/internal/usercheck"
 )
+
+// shellPathRegex 验证 shell 路径只包含安全字符
+var shellPathRegex = regexp.MustCompile(`^[a-zA-Z0-9_/\-.]+$`)
+
+// validateShellPath 验证 shell 路径是否安全
+func validateShellPath(shell string) bool {
+	if shell == "" {
+		return false
+	}
+	// 检查路径遍历
+	if strings.Contains(shell, "..") {
+		return false
+	}
+	return shellPathRegex.MatchString(shell)
+}
+
+// truncateHostname 截断 hostname 到内核限制 (HOST_NAME_MAX=64, 含null)
+func truncateHostname(hostname string) string {
+	const maxHostname = 63 // HOST_NAME_MAX - 1
+	if len(hostname) > maxHostname {
+		return hostname[:maxHostname]
+	}
+	return hostname
+}
+
+// isPrintable 检查字符是否可打印
+func isPrintable(c rune) bool {
+	return unicode.IsPrint(c)
+}
+
+// sanitizeShellArg 清理用于 shell -c 的参数，防止命令注入
+func sanitizeShellArg(s string) string {
+	// 只允许可打印字符
+	result := make([]rune, 0, len(s))
+	for _, c := range s {
+		if isPrintable(c) {
+			result = append(result, c)
+		}
+	}
+	return string(result)
+}
 
 // Run 运行 chroot 模式
 func Run(rootfsPath string, customShell string, netMode bool) error {
@@ -123,21 +167,33 @@ func Run(rootfsPath string, customShell string, netMode bool) error {
 
 	// 信号转发
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGWINCH)
+	defer signal.Stop(sigChan)
+	defer close(sigChan)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("%s", i18n.Tf("chroot.start_fail", err))
 	}
 
-	// 如果启用了网络模式，在子进程的网络命名空间中配置网络
+	// 使用轮询等待网络命名空间就绪，替代固定 sleep
 	if netMode {
-		// 等待子进程创建网络命名空间
-		time.Sleep(100 * time.Millisecond)
+		ready := make(chan struct{})
+		go func() {
+			for i := 0; i < 100; i++ {
+				if _, err := os.Stat(fmt.Sprintf("/proc/%d/ns/net", cmd.Process.Pid)); err == nil {
+					close(ready)
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			close(ready) // 超时也关闭，继续尝试
+		}()
+
+		<-ready
 
 		if err := network.SetupNetworkInChildNs(cmd.Process.Pid); err != nil {
 			logger.Warn(i18n.Tf("chroot.net_setup_fail", err))
 		} else {
-			// 设置 DNS
 			_ = network.SetupChildDns(absRootfsPath)
 			logger.Info(i18n.T("chroot.net_setup_done"))
 		}
@@ -148,32 +204,27 @@ func Run(rootfsPath string, customShell string, netMode bool) error {
 		for sig := range sigChan {
 			if cmd.Process != nil {
 				logger.Debug("转发信号 %v 给子进程", sig)
-				cmd.Process.Signal(sig)
+				if err := cmd.Process.Signal(sig); err != nil {
+					logger.Debug("信号转发失败（进程可能已退出）: %v", err)
+				}
 			}
 		}
 	}()
 
-	if err := cmd.Wait(); err != nil {
-		// 清理网络资源
-		if netMode {
-			network.CleanupNetworkOnHost()
-		}
-		// 不立即退出groot，而是返回错误让上层处理
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			// 返回nil而不是os.Exit，让groot继续运行
-			logger.Info("子进程退出，退出码: %d", exitErr.ExitCode())
-		} else {
-			logger.Warn("子进程执行失败: %v", err)
-		}
-	}
+	err = cmd.Wait()
 
-	// 清理网络资源
+	// 统一清理网络资源
 	if netMode {
 		network.CleanupNetworkOnHost()
 	}
 
-	signal.Stop(sigChan)
-	close(sigChan)
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			logger.Info(i18n.Tf("chroot.shell_exit", exitErr.ExitCode()))
+		} else {
+			logger.Warn(i18n.Tf("chroot.shell_error", err))
+		}
+	}
 
 	return nil
 }
@@ -184,6 +235,7 @@ func ChildMain(rootfsPath string, customShell string, customUser string, netMode
 
 	// 首先设置主机名（在 UTS namespace 中）
 	hostname := env.GetHostname(rootfsPath, "groot")
+	hostname = truncateHostname(hostname)
 	logger.Debug(i18n.Tf("chroot.hostname_set", hostname))
 	if err := syscall.Sethostname([]byte(hostname)); err != nil {
 		logger.Warn(i18n.Tf("chroot.hostname_fail", err))
@@ -207,6 +259,12 @@ func ChildMain(rootfsPath string, customShell string, customUser string, netMode
 
 	// 确定要使用的 shell
 	shell := findShell(rootfsPath, customShell, userInfo.Shell)
+
+	// 验证 shell 路径安全性
+	if !validateShellPath(shell) {
+		logger.Warn("shell 路径不安全: %s, 回退到 /bin/sh", shell)
+		shell = "/bin/sh"
+	}
 
 	// 更新环境变量中的 SHELL
 	for i, e := range newEnv {
@@ -270,7 +328,9 @@ func ChildMain(rootfsPath string, customShell string, customUser string, netMode
 	// 确保 /dev/pts/ptmx 设备存在
 	if _, err := os.Stat("/dev/pts/ptmx"); os.IsNotExist(err) {
 		devNum := (5 << 8) | 2
-		syscall.Mknod("/dev/pts/ptmx", syscall.S_IFCHR|0666, int(devNum))
+		if err := syscall.Mknod("/dev/pts/ptmx", syscall.S_IFCHR|0666, int(devNum)); err != nil {
+			logger.Debug("创建 /dev/pts/ptmx 失败: %v", err)
+		}
 	}
 
 	// 确保 /dev/ptmx 存在（符号链接或设备）
@@ -406,11 +466,19 @@ exec /usr/bin/pacman "$@"
 		pacmanWrapper = "; export PATH=/dev/shm:/sbin:/usr/sbin:/bin:/usr/bin; echo 'Wrapper PATH: $PATH'"
 	}
 
-	fixScript := "if [ -f /var/lib/dpkg/info/libc6:amd64.postinst ]; then " +
-		"grep -q 'Groot: skip' /var/lib/dpkg/info/libc6:amd64.postinst 2>/dev/null || " +
-		"(cp /var/lib/dpkg/info/libc6:amd64.postinst /var/lib/dpkg/info/libc6:amd64.postinst.bak 2>/dev/null; " +
-		"echo '#!/bin/bash'; echo 'exit 0' > /var/lib/dpkg/info/libc6:amd64.postinst; " +
-		"chmod +x /var/lib/dpkg/info/libc6:amd64.postinst); fi"
+	// 检测是否是非 POSIX shell（fish 等不支持 bash 语法）
+	shellBase := filepath.Base(shell)
+	isNonPOSIXShell := shellBase == "fish" || shellBase == "csh" || shellBase == "tcsh" || shellBase == "ksh"
+
+	// fixScript 只对 POSIX shell（bash/dash/sh/ash）执行
+	fixScript := ""
+	if !isNonPOSIXShell {
+		fixScript = "if [ -f /var/lib/dpkg/info/libc6:amd64.postinst ]; then " +
+			"grep -q 'Groot: skip' /var/lib/dpkg/info/libc6:amd64.postinst 2>/dev/null || " +
+			"(cp /var/lib/dpkg/info/libc6:amd64.postinst /var/lib/dpkg/info/libc6:amd64.postinst.bak 2>/dev/null; " +
+			"echo '#!/bin/bash'; echo 'exit 0' > /var/lib/dpkg/info/libc6:amd64.postinst; " +
+			"chmod +x /var/lib/dpkg/info/libc6:amd64.postinst); fi"
+	}
 
 	// 为 Arch Linux 添加 /dev/shm 到 PATH
 	if pacmanWrapper != "" {
@@ -424,10 +492,13 @@ exec /usr/bin/pacman "$@"
 
 	// 以 login shell 方式启动，自动 source /etc/profile（覆盖 PS1、PATH 等）
 	// 启动前打印彩色广告横幅
-	bannerCmd := "printf '\\033[36m[Groot]\\033[0m \\033[32m如果你喜欢groot的话，请前往 https://gyscan.space 下载gyscan吧 [qwq]\\033[0m\\n'; "
+	bannerCmd := slogan.GetBannerCmd() + "; "
 
-	// 在shell启动前执行修复脚本
-	fixCmdStr := fixScript + pacmanWrapper
+	// 非 POSIX shell（fish等）不能使用 bash 语法的 fixScript/pacmanWrapper
+	fixCmdStr := ""
+	if !isNonPOSIXShell {
+		fixCmdStr = fixScript + pacmanWrapper
+	}
 
 	// 检查是否有 script 命令（用于提供伪终端支持）
 	hasScript := false
@@ -445,18 +516,24 @@ exec /usr/bin/pacman "$@"
 		hasCttyhack = true
 	}
 
+	// 对 shell 参数进行安全检查
+	safeShell := sanitizeShellArg(shell)
+
 	var cmd *exec.Cmd
 	if hasScript {
 		// 使用 script 命令提供伪终端支持
-		cmd = exec.Command("/usr/bin/script", "-qc", fixCmdStr+"; "+bannerCmd+" SHELL="+shell+" exec "+shell+" -l", "/dev/null")
+		// 使用安全的 shell 参数
+		execStr := fixCmdStr + "; " + bannerCmd + " SHELL=" + safeShell + " exec " + safeShell + " -l"
+		cmd = exec.Command("/usr/bin/script", "-qc", execStr, "/dev/null")
 	} else if hasCttyhack {
 		// 使用 cttyhack（Alpine特有）提供tty支持
-		cmd = exec.Command("/usr/bin/cttyhack", shell, "-c", fixCmdStr+"; "+bannerCmd+" SHELL="+shell+" exec "+shell+" -l")
+		cmd = exec.Command("/usr/bin/cttyhack", shell, "-c",
+			sanitizeShellArg(fixCmdStr+"; "+bannerCmd+" SHELL="+safeShell+" exec "+safeShell+" -l"))
 	} else {
 		// 直接执行目标shell，不使用 /bin/sh -c
 		// 先执行修复脚本，然后启动shell
 		// 使用 SHELL=$shell exec $shell -l 确保SHELL环境变量正确
-		startupCmd := fixCmdStr + "; " + bannerCmd + " SHELL=" + shell + " exec " + shell + " -l"
+		startupCmd := fixCmdStr + "; " + bannerCmd + " SHELL=" + safeShell + " exec " + safeShell + " -l"
 		cmd = exec.Command("/bin/sh", "-c", startupCmd)
 	}
 
@@ -487,20 +564,27 @@ exec /usr/bin/pacman "$@"
 func findShell(rootfsPath, customShell, defaultShell string) string {
 	// 优先检查用户指定的 shell
 	if customShell != "" {
-		shellPath := customShell
-		// 如果是相对路径，添加 / 前缀
-		if customShell[0] != '/' {
-			shellPath = "/" + customShell
-		}
-		// 在rootfs中检查绝对路径
-		if _, err := os.Stat(rootfsPath + shellPath); err == nil {
-			return shellPath
-		}
-		// 如果是相对路径，尝试常见的 shell 路径
-		if customShell[0] != '/' {
-			for _, path := range []string{"/bin/" + customShell, "/usr/bin/" + customShell} {
-				if _, err := os.Stat(rootfsPath + path); err == nil {
-					return path
+		// 安全检查：防止路径遍历
+		if strings.Contains(customShell, "..") {
+			logger.Warn("customShell 包含路径遍历: %s", customShell)
+		} else {
+			shellPath := customShell
+			// 如果是相对路径，添加 / 前缀
+			if customShell[0] != '/' {
+				shellPath = "/" + customShell
+			}
+			// 在rootfs中检查绝对路径
+			fullPath := filepath.Join(rootfsPath, shellPath)
+			if _, err := os.Stat(fullPath); err == nil {
+				return shellPath
+			}
+			// 如果是相对路径，尝试常见的 shell 路径
+			if customShell[0] != '/' {
+				for _, path := range []string{"/bin/" + customShell, "/usr/bin/" + customShell} {
+					fullPath := filepath.Join(rootfsPath, path)
+					if _, err := os.Stat(fullPath); err == nil {
+						return path
+					}
 				}
 			}
 		}
@@ -508,7 +592,8 @@ func findShell(rootfsPath, customShell, defaultShell string) string {
 
 	// 使用用户默认 shell
 	if defaultShell != "" && defaultShell != "/usr/bin/nologin" {
-		if _, err := os.Stat(rootfsPath + defaultShell); err == nil {
+		fullPath := filepath.Join(rootfsPath, defaultShell)
+		if _, err := os.Stat(fullPath); err == nil {
 			return defaultShell
 		}
 	}
@@ -517,7 +602,8 @@ func findShell(rootfsPath, customShell, defaultShell string) string {
 	// 优先查找轻量级shell（ash/dash/sh），然后是bash
 	shells := []string{"/bin/ash", "/bin/dash", "/bin/sh", "/usr/bin/bash", "/usr/bin/sh", "/bin/bash"}
 	for _, s := range shells {
-		if _, err := os.Stat(rootfsPath + s); err == nil {
+		fullPath := filepath.Join(rootfsPath, s)
+		if _, err := os.Stat(fullPath); err == nil {
 			return s
 		}
 	}
@@ -527,7 +613,7 @@ func findShell(rootfsPath, customShell, defaultShell string) string {
 
 // createDevices 在 rootfs 中创建必要的设备节点，确保终端和系统功能正常
 func createDevices(rootfsPath string) {
-	devPath := rootfsPath + "/dev"
+	devPath := filepath.Join(rootfsPath, "dev")
 
 	// 确保 /dev 目录存在
 	os.MkdirAll(devPath, 0755)
@@ -550,7 +636,7 @@ func createDevices(rootfsPath string) {
 	}
 
 	for _, dev := range devices {
-		path := devPath + "/" + dev.path
+		path := filepath.Join(devPath, dev.path)
 		// 检查设备是否已存在（可能通过bind mount从宿主机继承）
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			// 创建设备节点，使用 mknod 系统调用
@@ -563,11 +649,11 @@ func createDevices(rootfsPath string) {
 	}
 
 	// 创建 /dev/pts 目录（用于伪终端）
-	ptsPath := devPath + "/pts"
+	ptsPath := filepath.Join(devPath, "pts")
 	os.MkdirAll(ptsPath, 0755)
 
 	// 创建 /dev/ptmx 设备（伪终端多路复用器）
-	ptmxPath := devPath + "/ptmx"
+	ptmxPath := filepath.Join(devPath, "ptmx")
 	if _, err := os.Stat(ptmxPath); os.IsNotExist(err) {
 		// ptmx: major 5, minor 2
 		devNum := (5 << 8) | 2
@@ -578,11 +664,11 @@ func createDevices(rootfsPath string) {
 	}
 
 	// 创建 /dev/shm 目录（共享内存）
-	shmPath := devPath + "/shm"
+	shmPath := filepath.Join(devPath, "shm")
 	os.MkdirAll(shmPath, 1777)
 
 	// 创建 /dev/fd 符号链接（文件描述符）
-	fdPath := devPath + "/fd"
+	fdPath := filepath.Join(devPath, "fd")
 	if _, err := os.Lstat(fdPath); os.IsNotExist(err) {
 		os.Symlink("/proc/self/fd", fdPath)
 	}
@@ -594,23 +680,25 @@ func createDevices(rootfsPath string) {
 		"stderr": "/proc/self/fd/2",
 	}
 	for name, target := range stdPaths {
-		path := devPath + "/" + name
+		path := filepath.Join(devPath, name)
 		if _, err := os.Lstat(path); os.IsNotExist(err) {
 			os.Symlink(target, path)
 		}
 	}
 
 	// 创建 /dev/core 符号链接
-	corePath := devPath + "/core"
+	corePath := filepath.Join(devPath, "core")
 	if _, err := os.Lstat(corePath); os.IsNotExist(err) {
 		os.Symlink("/proc/kcore", corePath)
 	}
 
 	// 创建 /dev/pts/ptmx 设备（如果不存在）
-	ptsPtmxPath := ptsPath + "/ptmx"
+	ptsPtmxPath := filepath.Join(ptsPath, "ptmx")
 	if _, err := os.Stat(ptsPtmxPath); os.IsNotExist(err) {
 		devNum := (5 << 8) | 2
-		syscall.Mknod(ptsPtmxPath, syscall.S_IFCHR|0666, int(devNum))
+		if err := syscall.Mknod(ptsPtmxPath, syscall.S_IFCHR|0666, int(devNum)); err != nil {
+			logger.Debug("创建 /dev/pts/ptmx 失败: %v", err)
+		}
 	}
 
 	logger.Debug("设备节点创建完成")

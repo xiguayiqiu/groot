@@ -13,9 +13,36 @@ import (
 	"groot/internal/env"
 	"groot/internal/i18n"
 	"groot/internal/logger"
+	"groot/internal/slogan"
 	"groot/internal/termux"
 	"groot/internal/usercheck"
 )
+
+// truncateHostname 截断 hostname 到内核限制
+func truncateHostnameAlpine(hostname string) string {
+	const maxHostname = 63
+	if len(hostname) > maxHostname {
+		return hostname[:maxHostname]
+	}
+	return hostname
+}
+
+// validateShellPath 验证 shell 路径是否安全
+func validateShellPathAlpine(shell string) bool {
+	if shell == "" {
+		return false
+	}
+	if strings.Contains(shell, "..") {
+		return false
+	}
+	for _, c := range shell {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '/' || c == '_' || c == '-' || c == '.') {
+			return false
+		}
+	}
+	return true
+}
 
 // RunAlpineProot 专门为 alpine 量身定做的 100% 完美版本！！！
 func RunAlpineProot(rootfsPath string, customShell string) error {
@@ -70,10 +97,15 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 	// 确定 shell - 与 chroot 模式相同的逻辑
 	shell := "/bin/sh"
 	if customShell != "" {
-		if customShell[0] != '/' {
-			shell = "/" + customShell
+		// 安全检查：防止路径遍历
+		if strings.Contains(customShell, "..") {
+			logger.Warn("customShell 包含路径遍历: %s", customShell)
 		} else {
-			shell = customShell
+			if customShell[0] != '/' {
+				shell = "/" + customShell
+			} else {
+				shell = customShell
+			}
 		}
 	} else if userInfo.Shell != "" && userInfo.Shell != "/usr/bin/nologin" {
 		// 优先使用 passwd 中设置的 shell（即 chsh 设置的）
@@ -87,16 +119,21 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 		}
 	}
 
+	// 验证 shell 路径安全性
+	if !validateShellPathAlpine(shell) {
+		logger.Warn("shell 路径不安全: %s, 回退到 /bin/sh", shell)
+		shell = "/bin/sh"
+	}
+
 	// 终极挂载参数 - 以 login shell 方式启动，自动 source /etc/profile
 	// 启动前打印彩色广告横幅
-	execCmd := "export PATH=/sbin:/usr/sbin:/bin:/usr/bin; export ENV=/etc/profile; printf '\\033[36m[Groot]\\033[0m \\033[32m如果你喜欢groot的话，请前往 https://gyscan.space 下载gyscan吧 [qwq]\\033[0m\\n'; exec " + shell + " -l"
+	execCmd := "export PATH=/sbin:/usr/sbin:/bin:/usr/bin; export ENV=/etc/profile; " + slogan.GetBannerCmd() + "; exec " + shell + " -l"
 	// Alpine 默认使用 busybox 硬链接（多个目录项共享同一 inode）。
 	// 在 Termux/proot 环境下，文件系统可能不支持硬链接，
 	// 必须通过 --link2symlink 让 proot 把 link() 转换为 symlink()，
 	// 否则会出现 "command not found"（错误 127）。
 	// 参考：termux/proot#57, termux/proot#284, Alpine Linux 论坛
-	var args []string
-	args = []string{
+	args := []string{
 		"--kill-on-exit",
 		"-0",
 		"-r", absRootfsPath,
@@ -129,7 +166,9 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 	}
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGWINCH)
+	defer signal.Stop(sigChan)
+	defer close(sigChan)
 
 	if err := cmd.Start(); err != nil {
 		return err
@@ -138,7 +177,9 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 	go func() {
 		for sig := range sigChan {
 			if cmd.Process != nil {
-				cmd.Process.Signal(sig)
+				if err := cmd.Process.Signal(sig); err != nil {
+					logger.Debug("信号转发失败: %v", err)
+				}
 			}
 		}
 	}()
@@ -150,8 +191,6 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 		return err
 	}
 
-	signal.Stop(sigChan)
-	close(sigChan)
 	return nil
 }
 
@@ -178,9 +217,13 @@ func fixAlpineRootfs(rootfsPath string, uid, gid int) {
 			processedInodes[inodeKey] = true
 		}
 
-		os.Chown(path, uid, gid)
+		if err := os.Chown(path, uid, gid); err != nil {
+			logger.Debug("chown %s failed: %v", path, err)
+		}
 		if info.IsDir() {
-			os.Chmod(path, 0755)
+			if err := os.Chmod(path, 0755); err != nil {
+				logger.Debug("chmod %s failed: %v", path, err)
+			}
 		} else {
 			relPath, err := filepath.Rel(rootfsPath, path)
 			isExec := false
@@ -197,9 +240,13 @@ func fixAlpineRootfs(rootfsPath string, uid, gid int) {
 			}
 			mode := info.Mode()
 			if mode&0111 != 0 || isExec {
-				os.Chmod(path, 0755)
+				if err := os.Chmod(path, 0755); err != nil {
+					logger.Debug("chmod %s failed: %v", path, err)
+				}
 			} else {
-				os.Chmod(path, 0644)
+				if err := os.Chmod(path, 0644); err != nil {
+					logger.Debug("chmod %s failed: %v", path, err)
+				}
 			}
 		}
 		return nil

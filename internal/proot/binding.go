@@ -1,8 +1,8 @@
-
 package proot
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -62,8 +62,18 @@ func (pt *PathTranslator) AddBinding(hostPath, guestPath string) {
 }
 
 func (pt *PathTranslator) GuestToHost(guestPath string) (string, bool) {
-	for _, b := range pt.bindings {
-		if guestPath == b.GuestPath || strings.HasPrefix(guestPath, b.GuestPath+"/") {
+	// 按 GuestPath 长度降序排序，优先匹配最长前缀
+	sorted := make([]Binding, len(pt.bindings))
+	copy(sorted, pt.bindings)
+	sort.Slice(sorted, func(i, j int) bool {
+		return len(sorted[i].GuestPath) > len(sorted[j].GuestPath)
+	})
+
+	for _, b := range sorted {
+		if guestPath == b.GuestPath {
+			return b.HostPath, true
+		}
+		if strings.HasPrefix(guestPath, b.GuestPath+"/") {
 			relativePath := guestPath[len(b.GuestPath):]
 			return filepath.Join(b.HostPath, relativePath), true
 		}
@@ -72,8 +82,18 @@ func (pt *PathTranslator) GuestToHost(guestPath string) (string, bool) {
 }
 
 func (pt *PathTranslator) HostToGuest(hostPath string) (string, bool) {
-	for _, b := range pt.bindings {
-		if hostPath == b.HostPath || strings.HasPrefix(hostPath, b.HostPath+"/") {
+	// 按 HostPath 长度降序排序，优先匹配最长前缀
+	sorted := make([]Binding, len(pt.bindings))
+	copy(sorted, pt.bindings)
+	sort.Slice(sorted, func(i, j int) bool {
+		return len(sorted[i].HostPath) > len(sorted[j].HostPath)
+	})
+
+	for _, b := range sorted {
+		if hostPath == b.HostPath {
+			return b.GuestPath, true
+		}
+		if strings.HasPrefix(hostPath, b.HostPath+"/") {
 			relativePath := hostPath[len(b.HostPath):]
 			result := filepath.Join(b.GuestPath, relativePath)
 			return result, true
@@ -94,22 +114,4 @@ func (pt *PathTranslator) TranslatePathBack(path string) string {
 		return translated
 	}
 	return path
-}
-
-func cleanPath(path string) string {
-	path = filepath.Clean(path)
-	if path == "." {
-		return "/"
-	}
-	return path
-}
-
-func isPrefix(path string) bool {
-	for path != "/" {
-		if path == "" {
-			return false
-		}
-		path = filepath.Dir(path)
-	}
-	return true
 }
