@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"groot/internal/i18n"
-	"groot/internal/permission"
-	"groot/internal/termux"
+	"litevm/internal/i18n"
+	"litevm/internal/permission"
+	"litevm/internal/termux"
 )
 
 type BuildType string
@@ -276,7 +276,7 @@ func buildArch(config BuildConfig) error {
 		return fmt.Errorf("failed to create target directory: %w", err)
 	}
 
-	tempConfigDir := filepath.Join(os.TempDir(), fmt.Sprintf("groot-pacman-%d", os.Getpid()))
+	tempConfigDir := filepath.Join(os.TempDir(), fmt.Sprintf("litevm-pacman-%d", os.Getpid()))
 	if err := os.MkdirAll(tempConfigDir, 0755); err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}

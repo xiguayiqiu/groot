@@ -12,15 +12,15 @@ import (
 	"time"
 	"unicode"
 
-	"groot/internal/cleanup"
-	"groot/internal/env"
-	"groot/internal/i18n"
-	"groot/internal/logger"
-	"groot/internal/mount"
-	"groot/internal/network"
-	"groot/internal/permission"
-	"groot/internal/slogan"
-	"groot/internal/usercheck"
+	"litevm/internal/cleanup"
+	"litevm/internal/env"
+	"litevm/internal/i18n"
+	"litevm/internal/logger"
+	"litevm/internal/mount"
+	"litevm/internal/network"
+	"litevm/internal/permission"
+	"litevm/internal/slogan"
+	"litevm/internal/usercheck"
 )
 
 // shellPathRegex 验证 shell 路径只包含安全字符
@@ -234,7 +234,7 @@ func ChildMain(rootfsPath string, customShell string, customUser string, netMode
 	logger.Info(i18n.T("chroot.entering"))
 
 	// 首先设置主机名（在 UTS namespace 中）
-	hostname := env.GetHostname(rootfsPath, "groot")
+	hostname := env.GetHostname(rootfsPath, "litevm")
 	hostname = truncateHostname(hostname)
 	logger.Debug(i18n.Tf("chroot.hostname_set", hostname))
 	if err := syscall.Sethostname([]byte(hostname)); err != nil {
@@ -548,9 +548,9 @@ exec /usr/bin/pacman "$@"
 	}
 
 	if err := cmd.Wait(); err != nil {
-		// 不立即退出groot，而是检查退出原因
+		// 不立即退出litevm，而是检查退出原因
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			// 如果是信号导致的退出（如Ctrl+C），不退出groot
+			// 如果是信号导致的退出（如Ctrl+C），不退出litevm
 			logger.Info(i18n.Tf("chroot.shell_exit", exitErr.ExitCode()))
 		} else {
 			logger.Warn(i18n.Tf("chroot.shell_error", err))

@@ -8,9 +8,9 @@ import (
 	"syscall"
 	"time"
 
-	"groot/internal/i18n"
-	"groot/internal/logger"
-	"groot/internal/usercheck"
+	"litevm/internal/i18n"
+	"litevm/internal/logger"
+	"litevm/internal/usercheck"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/moby/sys/mountinfo"

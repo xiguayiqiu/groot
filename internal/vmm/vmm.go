@@ -12,13 +12,13 @@ import (
 
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
-	"groot/internal/logger"
+	"litevm/internal/logger"
 )
 
 const (
 	defaultKernelPath    = "kernel/amd64/vmlinux.bin"
 	defaultRootfsPath    = "rootfs/rootfs.ext4"
-	defaultSocketPath    = "/tmp/groot-firecracker.socket"
+	defaultSocketPath    = "/tmp/litevm-firecracker.socket"
 	defaultKernelCmdline = "console=ttyS0,115200n8 reboot=k panic=1 nomodule"
 )
 

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"groot/internal/logger"
+	"litevm/internal/logger"
 )
 
 // IsArchLinux 检测是否是 Arch Linux
@@ -59,7 +59,7 @@ func SetupArchSpecific(rootfsPath string) {
 
 	// 3. 创建 tmpfs 挂载点标记（让 pacman 知道这是 chroot 环境）
 	// 这有助于避免 pacman 的某些挂载点检测问题
-	flagFile := filepath.Join(rootfsPath, ".groot-arch")
+	flagFile := filepath.Join(rootfsPath, ".litevm-arch")
 	_ = os.WriteFile(flagFile, []byte("true"), 0644)
 
 	logger.Info("Arch Linux 配置完成")

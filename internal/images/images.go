@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"groot/internal/i18n"
-	"groot/internal/termux"
+	"litevm/internal/i18n"
+	"litevm/internal/termux"
 )
 
 //go:embed images_update.jsonc

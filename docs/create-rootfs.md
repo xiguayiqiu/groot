@@ -324,13 +324,13 @@ file kernel/amd64/vmlinux.bin  # 应显示 ELF 64-bit LSB executable
 
 ```bash
 # 下载内核
-./groot vmm download-kernel
+./litevm vmm download-kernel
 
 # 配置网络（一次性，需要 root）
-sudo ./groot vmm setup-network
+sudo ./litevm vmm setup-network
 
 # 启动 VM（无需 root）
-./groot vmm run --kernel kernel/x86_64/vmlinux-6.18.44 --rootfs rootfs/rootfs.ext4 --net
+./litevm vmm run --kernel kernel/x86_64/vmlinux-6.18.44 --rootfs rootfs/rootfs.ext4 --net
 
 # SSH 访问
 ssh root@172.16.0.25   # 密码: root
@@ -341,24 +341,24 @@ ssh root@172.16.0.25   # 密码: root
 ### 一键配置（推荐）
 
 ```bash
-sudo ./groot vmm setup-network
+sudo ./litevm vmm setup-network
 ```
 
 此命令会自动完成：
-1. 创建 TAP 设备（`groot-tap0`），分配给当前用户
+1. 创建 TAP 设备（`litevm-tap0`），分配给当前用户
 2. 配置 IP 地址和 NAT 转发
 3. 授权 `/dev/kvm` 和 `/dev/net/tun`
 
 配置完成后，日常使用无需 root：
 
 ```bash
-./groot vmm run --kernel kernel/x86_64/vmlinux-6.18.44 --rootfs rootfs/rootfs.ext4 --net
+./litevm vmm run --kernel kernel/x86_64/vmlinux-6.18.44 --rootfs rootfs/rootfs.ext4 --net
 ```
 
 ### 清除网络
 
 ```bash
-sudo ./groot vmm rm-network
+sudo ./litevm vmm rm-network
 ```
 
 ### 手动配置
@@ -367,19 +367,19 @@ sudo ./groot vmm rm-network
 
 ```bash
 # 创建 TAP 设备（指定用户）
-sudo ip tuntap add dev groot-tap0 mode tap user $(id -u)
+sudo ip tuntap add dev litevm-tap0 mode tap user $(id -u)
 
 # 配置 IP
-sudo ip addr add 172.16.0.1/24 dev groot-tap0
-sudo ip link set groot-tap0 up
+sudo ip addr add 172.16.0.1/24 dev litevm-tap0
+sudo ip link set litevm-tap0 up
 
 # 启用 IP 转发
 sudo sysctl -w net.ipv4.ip_forward=1
 
 # 配置 NAT
 sudo iptables -t nat -A POSTROUTING -s 172.16.0.0/24 -j MASQUERADE
-sudo iptables -A FORWARD -i groot-tap0 -j ACCEPT
-sudo iptables -A FORWARD -o groot-tap0 -j ACCEPT
+sudo iptables -A FORWARD -i litevm-tap0 -j ACCEPT
+sudo iptables -A FORWARD -o litevm-tap0 -j ACCEPT
 
 # 授权 /dev/kvm
 sudo setfacl -m u:$(id -u):rw /dev/kvm

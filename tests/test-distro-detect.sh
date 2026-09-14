@@ -2,11 +2,11 @@
 # 发行版检测测试脚本
 # 用法: bash tests/test-distro-detect.sh
 
-echo "=== Groot 发行版检测测试 ==="
+echo "=== LiteVM 发行版检测测试 ==="
 echo
 
 # 测试目录
-TEST_DIR="/tmp/groot-test-rootfs"
+TEST_DIR="/tmp/litevm-test-rootfs"
 PASSED=0
 FAILED=0
 

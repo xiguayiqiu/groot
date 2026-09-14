@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"groot/internal/i18n"
-	"groot/internal/logger"
+	"litevm/internal/i18n"
+	"litevm/internal/logger"
 )
 
 // 定义 Linux capabilities 常量

@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"groot/internal/logger"
+	"litevm/internal/logger"
 )
 
 const (

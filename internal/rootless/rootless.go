@@ -12,11 +12,11 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"groot/internal/logger"
+	"litevm/internal/logger"
 )
 
 const (
-	RootlessKitStateDir = "/tmp/groot-rootlesskit"
+	RootlessKitStateDir = "/tmp/litevm-rootlesskit"
 	PipeFDEnvKey        = "ROOTLESSKIT_PIPE_FD"
 	ChildUseActivation  = "ROOTLESSKIT_CHILD_USE_ACTIVATION"
 	StateDirEnvKey      = "ROOTLESSKIT_STATE_DIR"
@@ -50,7 +50,7 @@ type rootlessContext struct {
 func NewRootlessContext(cfg *RootlessConfig) *rootlessContext {
 	return &rootlessContext{
 		config:   cfg,
-		stateDir: filepath.Join(RootlessKitStateDir, fmt.Sprintf("groot-%d", os.Getpid())),
+		stateDir: filepath.Join(RootlessKitStateDir, fmt.Sprintf("litevm-%d", os.Getpid())),
 	}
 }
 
@@ -338,7 +338,7 @@ func RunChild() error {
 
 	hostname := cfg.Hostname
 	if hostname == "" {
-		hostname = "groot"
+		hostname = "litevm"
 	}
 	if err := syscall.Sethostname([]byte(hostname)); err != nil {
 		logger.Debug("sethostname failed: %v", err)

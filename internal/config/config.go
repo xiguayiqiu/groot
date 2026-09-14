@@ -18,7 +18,7 @@ type Config struct {
 	DefaultShell string `envconfig:"SHELL" default:"/bin/sh"`
 
 	// 网络配置
-	Hostname string `envconfig:"HOSTNAME" default:"groot"`
+	Hostname string `envconfig:"HOSTNAME" default:"litevm"`
 
 	// 调试模式
 	Debug bool `envconfig:"DEBUG" default:"false"`

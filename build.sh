@@ -3,13 +3,13 @@
 set -e
 
 # ============================================
-#  Groot 编译与打包脚本
+#  LiteVM 编译与打包脚本
 #  支持 tar.xz 打包
 # ============================================
 
-PROJECT_NAME="groot"
+PROJECT_NAME="litevm"
 OUTPUT_DIR="build"
-VERSION="0.4.0"
+VERSION="1.0"
 PACKAGE_LICENSE="MIT"
 PACKAGE_URL="https://gyscan.space"
 PACKAGE_DESCRIPTION="Go 版双模式隔离工具（chroot/proot）- 轻量级 Linux 容器环境"
@@ -100,7 +100,7 @@ build_binary() {
   local start_time=$(date +%s)
   export GOOS GOARCH
 
-  if go build -ldflags "-s -w" -o "${OUTPUT_DIR}/${BINARY_NAME}" ./cmd/groot 2>&1; then
+  if go build -ldflags "-s -w" -o "${OUTPUT_DIR}/${BINARY_NAME}" ./cmd/litevm 2>&1; then
     local end_time=$(date +%s)
     local file_size=$(du -h "${OUTPUT_DIR}/${BINARY_NAME}" | cut -f1)
     echo "  ✓ 编译成功 ($((end_time - start_time))s, ${file_size})"
@@ -146,7 +146,7 @@ generate_install_script() {
 
   cat <<INSTALL
 #!/bin/sh
-# groot ${VERSION} 安装脚本
+# litevm ${VERSION} 安装脚本
 # 需要 root/sudo 权限安装到系统目录
 
 if [ "\$(id -u)" -ne 0 ] && [ -z "\$TERMUX_VERSION" ]; then
@@ -157,30 +157,30 @@ fi
 
 install_path="${install_path}"
 
-echo "正在安装 groot ${VERSION} 到 \${install_path}/ ..."
-cp groot "\${install_path}/groot"
-chmod 755 "\${install_path}/groot"
+echo "正在安装 litevm ${VERSION} 到 \${install_path}/ ..."
+cp litevm "\${install_path}/litevm"
+chmod 755 "\${install_path}/litevm"
 
 # 创建卸载脚本
-cat > "\${install_path}/groot-uninstall" << 'UNINSTALL'
+cat > "\${install_path}/litevm-uninstall" << 'UNINSTALL'
 #!/bin/sh
 if [ "\$(id -u)" -ne 0 ] && [ -z "\$TERMUX_VERSION" ]; then
     echo "请使用 sudo 运行卸载:"
-    echo "  sudo groot-uninstall"
+    echo "  sudo litevm-uninstall"
     exit 1
 fi
-echo "正在卸载 groot..."
-rm -f /usr/local/bin/groot
-rm -f /data/data/com.termux/files/usr/bin/groot
-rm -f /usr/local/bin/groot-uninstall
-rm -f /data/data/com.termux/files/usr/bin/groot-uninstall
-echo "groot 已卸载"
+echo "正在卸载 litevm..."
+rm -f /usr/local/bin/litevm
+rm -f /data/data/com.termux/files/usr/bin/litevm
+rm -f /usr/local/bin/litevm-uninstall
+rm -f /data/data/com.termux/files/usr/bin/litevm-uninstall
+echo "litevm 已卸载"
 UNINSTALL
-chmod 755 "\${install_path}/groot-uninstall"
+chmod 755 "\${install_path}/litevm-uninstall"
 
 echo "安装完成！"
-echo "  运行: groot -h"
-echo "  卸载: sudo groot-uninstall"
+echo "  运行: litevm -h"
+echo "  卸载: sudo litevm-uninstall"
 INSTALL
 }
 
@@ -208,8 +208,8 @@ package_tarxz() {
   mkdir -p "${pkg_dir}"
 
   # 复制二进制
-  cp "${OUTPUT_DIR}/${binary_name}" "${pkg_dir}/groot"
-  chmod 755 "${pkg_dir}/groot"
+  cp "${OUTPUT_DIR}/${binary_name}" "${pkg_dir}/litevm"
+  chmod 755 "${pkg_dir}/litevm"
 
   # 生成 install 脚本
   generate_install_script "$arch" >"${pkg_dir}/install.sh"
@@ -219,7 +219,7 @@ package_tarxz() {
   local abs_output_dir
   abs_output_dir="$(cd "${OUTPUT_DIR}" && pwd)"
   pushd "${pkg_dir}" >/dev/null
-  if tar -cJf "${abs_output_dir}/${out_name}" groot install.sh 2>/dev/null; then
+  if tar -cJf "${abs_output_dir}/${out_name}" litevm install.sh 2>/dev/null; then
     popd >/dev/null
     rm -rf "${OUTPUT_DIR}/tarxz"
     echo "  ✓ ${out_name}"
@@ -404,7 +404,7 @@ Termux 支持:
   在 Termux 中运行本脚本会自动检测并进入 Termux 兼容模式:
     - 只编译本机架构 (armv8 或 armv7)
     - tar.xz 包中的 install 脚本安装到 \$PREFIX/bin
-    - 附带 groot-uninstall 卸载脚本
+    - 附带 litevm-uninstall 卸载脚本
 
 示例:
   $0                         # 编译全部并打包
@@ -414,7 +414,7 @@ Termux 支持:
 
 输出:
   .tar.xz 文件包含:
-    groot             二进制文件
+    litevm             二进制文件
     install.sh        安装脚本 (安装到 /usr/local/bin/ 或 Termux 的 \$PREFIX/bin/，自动生成卸载命令)
     armv7/armv8 额外生成 termux_ 前缀的 Termux 专用包
 

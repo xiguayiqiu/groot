@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"groot/internal/i18n"
+	"litevm/internal/i18n"
 )
 
 // 日志级别

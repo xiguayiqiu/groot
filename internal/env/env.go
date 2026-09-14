@@ -9,12 +9,12 @@ import (
 	"sort"
 	"strings"
 
-	"groot/internal/i18n"
-	"groot/internal/logger"
-	"groot/internal/usercheck"
+	"litevm/internal/i18n"
+	"litevm/internal/logger"
+	"litevm/internal/usercheck"
 )
 
-// reservedVars 由 groot 程序自身设置的变量，不从 rootfs 配置文件读取
+// reservedVars 由 litevm 程序自身设置的变量，不从 rootfs 配置文件读取
 var reservedVars = map[string]bool{
 	"HOME":     true,
 	"USER":     true,
@@ -302,7 +302,7 @@ func isEnvVarName(name string) bool {
 	return true
 }
 
-// SetupEnv 从 rootfs 自动加载环境变量，仅设置 groot 必需的变量
+// SetupEnv 从 rootfs 自动加载环境变量，仅设置 litevm 必需的变量
 func SetupEnv(userInfo *usercheck.UserInfo, hostname string, rootfsPath ...string) []string {
 	absRootfsPath := ""
 	if len(rootfsPath) > 0 {
@@ -310,7 +310,7 @@ func SetupEnv(userInfo *usercheck.UserInfo, hostname string, rootfsPath ...strin
 	}
 
 	// ========================================
-	// 第一步：设置 groot 自身必需的变量
+	// 第一步：设置 litevm 自身必需的变量
 	// ========================================
 	envMap := map[string]string{
 		"HOME":     userInfo.Home,

@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"groot/internal/i18n"
-	"groot/internal/logger"
-	"groot/internal/termux"
+	"litevm/internal/i18n"
+	"litevm/internal/logger"
+	"litevm/internal/termux"
 )
 
 type NetworkConfig struct {

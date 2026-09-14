@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"groot/internal/termux"
+	"litevm/internal/termux"
 )
 
 // IsRoot 检查是否是真实 root 权限

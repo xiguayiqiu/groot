@@ -9,13 +9,13 @@ import (
 	"strings"
 	"syscall"
 
-	"groot/internal/cleanup"
-	"groot/internal/env"
-	"groot/internal/i18n"
-	"groot/internal/logger"
-	"groot/internal/slogan"
-	"groot/internal/termux"
-	"groot/internal/usercheck"
+	"litevm/internal/cleanup"
+	"litevm/internal/env"
+	"litevm/internal/i18n"
+	"litevm/internal/logger"
+	"litevm/internal/slogan"
+	"litevm/internal/termux"
+	"litevm/internal/usercheck"
 )
 
 // RunAlpineProot 专门为 alpine 量身定做的版本
@@ -119,7 +119,7 @@ func RunAlpineProot(rootfsPath string, customShell string) error {
 	cmd.Stderr = os.Stderr
 
 	// 使用统一的环境变量，传入 rootfs 来检测发行版
-	envVars := env.SetupEnv(userInfo, truncateHostname(env.GetHostname(absRootfsPath, "groot-proot")), absRootfsPath)
+	envVars := env.SetupEnv(userInfo, truncateHostname(env.GetHostname(absRootfsPath, "litevm-proot")), absRootfsPath)
 	cmd.Env = envVars
 
 	sigChan := make(chan os.Signal, 1)

@@ -4,7 +4,7 @@ package i18n
 // key 格式: "模块.功能"，例如 "cli.usage.chroot"
 var messages = map[string]map[Lang]string{
 	// ==========================================
-	// CLI 层 (cmd/groot/main.go)
+	// CLI 层 (cmd/litevm/main.go)
 	// ==========================================
 
 	// 错误消息
@@ -21,8 +21,8 @@ var messages = map[string]map[Lang]string{
 		LangEN: "-c, -p, -z are mutually exclusive",
 	},
 	"cli.error.z_needs_rootfs": {
-		LangZH: "使用 -z 参数需要指定 rootfs 目录，例如：./groot -z alpine rootfs/",
-		LangEN: "-z requires a rootfs directory, e.g.: ./groot -z alpine rootfs/",
+		LangZH: "使用 -z 参数需要指定 rootfs 目录，例如：./litevm -z alpine rootfs/",
+		LangEN: "-z requires a rootfs directory, e.g.: ./litevm -z alpine rootfs/",
 	},
 	"cli.error.unsupported_distro": {
 		LangZH: "不支持的发行版：%s，当前支持 alpine 和 debian",
@@ -531,8 +531,8 @@ var messages = map[string]map[Lang]string{
 		LangEN: "Chroot Environment Check Report",
 	},
 	"check.full_report": {
-		LangZH: "Groot 设备检查报告",
-		LangEN: "Groot Device Check Report",
+		LangZH: "LiteVM 设备检查报告",
+		LangEN: "LiteVM Device Check Report",
 	},
 	"check.device": {
 		LangZH: "设备",
@@ -905,6 +905,38 @@ var messages = map[string]map[Lang]string{
 	"check.desc_chroot": {
 		LangZH: "用于 root 模式运行",
 		LangEN: "Required for chroot mode",
+	},
+	"check.vmm_report": {
+		LangZH: "VMM 环境检查报告",
+		LangEN: "VMM Environment Check Report",
+	},
+	"check.vmm_supported": {
+		LangZH: "您的设备完全支持 VMM 模式！",
+		LangEN: "Your device fully supports VMM mode!",
+	},
+	"check.vmm_limited_hint": {
+		LangZH: "VMM 模式可能受限，建议检查失败项。",
+		LangEN: "VMM mode may be limited, check failed items.",
+	},
+	"check.kvm_available": {
+		LangZH: "KVM 虚拟化已可用",
+		LangEN: "KVM virtualization is available",
+	},
+	"check.no_kvm": {
+		LangZH: "KVM 不可用",
+		LangEN: "KVM not available",
+	},
+	"check.no_kvm_device": {
+		LangZH: "/dev/kvm 不存在，系统不支持硬件虚拟化",
+		LangEN: "/dev/kvm not found, hardware virtualization not supported",
+	},
+	"check.kvm_perm_denied": {
+		LangZH: "KVM 权限不足，需要 root 或加入 kvm 组",
+		LangEN: "KVM permission denied, need root or kvm group",
+	},
+	"check.no_firecracker": {
+		LangZH: "未安装 firecracker",
+		LangEN: "firecracker not installed",
 	},
 
 	// ==========================================
@@ -1553,8 +1585,8 @@ var messages = map[string]map[Lang]string{
 		LangEN: "Enable network support (requires root or pre-created TAP device)",
 	},
 	"cli.vmm.tap": {
-		LangZH: "指定 TAP 设备名称（默认: groot-tap0）",
-		LangEN: "Specify TAP device name (default: groot-tap0)",
+		LangZH: "指定 TAP 设备名称（默认: litevm-tap0）",
+		LangEN: "Specify TAP device name (default: litevm-tap0)",
 	},
 	"cli.vmm.host_ip": {
 		LangZH: "指定主机端 IP（默认: 172.16.0.1）",
@@ -1619,6 +1651,206 @@ var messages = map[string]map[Lang]string{
 	"vmm.network.nat_setup": {
 		LangZH: "正在配置 NAT...",
 		LangEN: "Configuring NAT...",
+	},
+	"vmm.network.error.no_root_setup": {
+		LangZH: "setup-network 需要 root 权限\n请运行: sudo ./litevm vmm setup-network",
+		LangEN: "setup-network requires root privileges\nPlease run: sudo ./litevm vmm setup-network",
+	},
+	"vmm.network.error.no_root_cleanup": {
+		LangZH: "cleanup-network 需要 root 权限\n请运行: sudo ./litevm vmm rm-network",
+		LangEN: "cleanup-network requires root privileges\nPlease run: sudo ./litevm vmm rm-network",
+	},
+	"vmm.network.error.create_tap": {
+		LangZH: "创建 TAP 设备失败",
+		LangEN: "Failed to create TAP device",
+	},
+	"vmm.network.error.configure_tap_ip": {
+		LangZH: "配置 TAP 设备 IP 失败",
+		LangEN: "Failed to configure TAP IP",
+	},
+	"vmm.network.error.bring_up_tap": {
+		LangZH: "启用 TAP 设备失败",
+		LangEN: "Failed to bring up TAP device",
+	},
+	"vmm.network.error.dhcp_start": {
+		LangZH: "启动 DHCP 服务器失败",
+		LangEN: "Failed to start DHCP server",
+	},
+	"vmm.network.error.remove_tap": {
+		LangZH: "移除 TAP 设备失败",
+		LangEN: "Failed to remove TAP device",
+	},
+	"vmm.network.error.write_netdev": {
+		LangZH: "写入 .netdev 文件失败",
+		LangEN: "Failed to write .netdev file",
+	},
+	"vmm.network.error.write_network": {
+		LangZH: "写入 .network 文件失败",
+		LangEN: "Failed to write .network file",
+	},
+	"vmm.network.error.write_service": {
+		LangZH: "写入 systemd 服务文件失败",
+		LangEN: "Failed to write systemd service",
+	},
+	"vmm.network.error.delete_tap": {
+		LangZH: "删除 TAP 设备 %s 失败",
+		LangEN: "Failed to delete tap device %s",
+	},
+	"vmm.network.error.create_tap_need_root": {
+		LangZH: "创建 TAP 设备失败（需要 root）: %s",
+		LangEN: "Failed to create tap device (need root): %s",
+	},
+	"vmm.network.error.create_tap_generic": {
+		LangZH: "创建 TAP 设备失败: %s",
+		LangEN: "Failed to create tap device: %s",
+	},
+	"vmm.network.error.bring_up_tap_generic": {
+		LangZH: "启用 TAP 设备失败: %s",
+		LangEN: "Failed to bring up tap device: %s",
+	},
+	"vmm.network.error.configure_tap_ip_generic": {
+		LangZH: "配置 TAP 设备 IP 失败: %s",
+		LangEN: "Failed to configure tap IP: %s",
+	},
+	"vmm.network.error.ip_forward": {
+		LangZH: "启用 IP 转发失败: %s",
+		LangEN: "Failed to enable IP forwarding: %s",
+	},
+	"vmm.network.error.iptables": {
+		LangZH: "iptables: %s",
+		LangEN: "iptables: %s",
+	},
+	"vmm.network.error.cleanup": {
+		LangZH: "清理错误",
+		LangEN: "cleanup errors",
+	},
+	"vmm.network.tap_exists": {
+		LangZH: "TAP 设备 %s 已存在",
+		LangEN: "TAP device %s already exists",
+	},
+	"vmm.network.creating_tap": {
+		LangZH: "正在创建 TAP 设备 %s（所有者 UID %d）...",
+		LangEN: "Creating TAP device %s (owned by UID %d)...",
+	},
+	"vmm.network.tap_created_ok": {
+		LangZH: "TAP 设备已创建",
+		LangEN: "TAP device created",
+	},
+	"vmm.network.enabling_ip_forward": {
+		LangZH: "正在启用 IP 转发...",
+		LangEN: "Enabling IP forwarding...",
+	},
+	"vmm.network.setting_nat": {
+		LangZH: "正在配置 NAT（-> %s）...",
+		LangEN: "Setting up NAT (-> %s)...",
+	},
+	"vmm.network.granting_kvm": {
+		LangZH: "正在授予 UID %s 对 /dev/kvm 的访问权限...",
+		LangEN: "Granting /dev/kvm access to UID %s...",
+	},
+	"vmm.network.tip_kvm_group": {
+		LangZH: "  提示: 你也可以将自己加入 kvm 组: sudo usermod -aG kvm $USER",
+		LangEN: "  Tip: You can also add yourself to the kvm group: sudo usermod -aG kvm $USER",
+	},
+	"vmm.network.ensuring_tun": {
+		LangZH: "正在确保 /dev/net/tun 可访问...",
+		LangEN: "Ensuring /dev/net/tun is accessible...",
+	},
+	"vmm.network.starting_dhcp": {
+		LangZH: "正在启动 DHCP 服务器...",
+		LangEN: "Starting DHCP server...",
+	},
+	"vmm.network.dhcp_started": {
+		LangZH: "DHCP 服务器已启动",
+		LangEN: "DHCP server started",
+	},
+	"vmm.network.persisting": {
+		LangZH: "正在持久化网络配置...",
+		LangEN: "Persisting network configuration...",
+	},
+	"vmm.network.tip_no_persist": {
+		LangZH: "  提示: 网络配置不会在重启后保留。请安装 systemd-networkd 以实现持久化。",
+		LangEN: "  Tip: Network will not survive reboot. Install systemd-networkd for persistence.",
+	},
+	"vmm.network.setup_complete": {
+		LangZH: "=== 网络配置完成！===",
+		LangEN: "=== Network setup complete! ===",
+	},
+	"vmm.network.persistent_hint": {
+		LangZH: "网络配置已持久化，重启后自动恢复。",
+		LangEN: "Network is now persistent across reboots.",
+	},
+	"vmm.network.run_without_root": {
+		LangZH: "现在可以无需 root 运行:",
+		LangEN: "You can now run without root:",
+	},
+	"vmm.network.run_hint": {
+		LangZH: "  ./litevm vmm run --kernel <kernel> --rootfs <rootfs> --net --tap %s",
+		LangEN: "  ./litevm vmm run --kernel <kernel> --rootfs <rootfs> --net --tap %s",
+	},
+	"vmm.network.cleanup_hint": {
+		LangZH: "清理命令:",
+		LangEN: "To clean up:",
+	},
+	"vmm.network.cleanup_hint_cmd": {
+		LangZH: "  sudo ./litevm vmm rm-network",
+		LangEN: "  sudo ./litevm vmm rm-network",
+	},
+	"vmm.network.persist_created_tap": {
+		LangZH: "  已创建 systemd-networkd TAP 设备配置",
+		LangEN: "  Created systemd-networkd config for TAP device",
+	},
+	"vmm.network.persist_created_service": {
+		LangZH: "  已创建 litevm-network.service（DHCP + NAT）",
+		LangEN: "  Created litevm-network.service for DHCP + NAT",
+	},
+	"vmm.network.persist_enabled": {
+		LangZH: "  已启用开机自启服务",
+		LangEN: "  Enabled services for auto-start on boot",
+	},
+	"vmm.network.stopping_services": {
+		LangZH: "正在停止服务...",
+		LangEN: "Stopping services...",
+	},
+	"vmm.network.stopping_dhcp": {
+		LangZH: "正在停止 dnsmasq...",
+		LangEN: "Stopping dnsmasq...",
+	},
+	"vmm.network.removing_nat": {
+		LangZH: "正在移除 NAT 规则...",
+		LangEN: "Removing NAT rules...",
+	},
+	"vmm.network.removing_tap": {
+		LangZH: "正在移除 TAP 设备 %s...",
+		LangEN: "Removing TAP device %s...",
+	},
+	"vmm.network.tap_not_exist": {
+		LangZH: "TAP 设备 %s 不存在",
+		LangEN: "TAP device %s does not exist",
+	},
+	"vmm.network.removing_persist": {
+		LangZH: "正在移除持久化网络配置...",
+		LangEN: "Removing persistent network configuration...",
+	},
+	"vmm.network.restoring_kvm": {
+		LangZH: "正在恢复 /dev/kvm 权限...",
+		LangEN: "Restoring /dev/kvm permissions...",
+	},
+	"vmm.network.cleanup_complete": {
+		LangZH: "=== 网络已清理！===",
+		LangEN: "=== Network cleaned up! ===",
+	},
+	"vmm.network.removed_networkd": {
+		LangZH: "  已移除 systemd-networkd 配置",
+		LangEN: "  Removed systemd-networkd config",
+	},
+	"vmm.network.removed_service": {
+		LangZH: "  已移除 litevm-network.service",
+		LangEN: "  Removed litevm-network.service",
+	},
+	"vmm.network.removed_sysctl": {
+		LangZH: "  已移除 sysctl 持久化配置",
+		LangEN: "  Removed sysctl persistence",
 	},
 	"cli.vmm.download_kernel": {
 		LangZH: "从 Firecracker S3 下载官方内核",
@@ -1697,8 +1929,8 @@ var messages = map[string]map[Lang]string{
 		LangEN: "Done. %d/%d downloaded successfully.",
 	},
 	"vmm.download.usage_hint": {
-		LangZH: "使用方法:\n  sudo ./groot vmm --kernel kernel/%s/%s --rootfs rootfs/rootfs.ext4",
-		LangEN: "To use a kernel:\n  sudo ./groot vmm --kernel kernel/%s/%s --rootfs rootfs/rootfs.ext4",
+		LangZH: "使用方法:\n  sudo ./litevm vmm --kernel kernel/%s/%s --rootfs rootfs/rootfs.ext4",
+		LangEN: "To use a kernel:\n  sudo ./litevm vmm --kernel kernel/%s/%s --rootfs rootfs/rootfs.ext4",
 	},
 	"vmm.download.legend": {
 		LangZH: "说明: QS = 官方预编译, CI = Firecracker CI 最新构建",

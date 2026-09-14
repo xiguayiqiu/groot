@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"groot/internal/i18n"
+	"litevm/internal/i18n"
 )
 
 const (
@@ -431,7 +431,7 @@ func DownloadKernel(downloadAll bool, arch string) error {
 		fmt.Printf("\n")
 		for _, idx := range toDownload {
 			k := allKernels[idx-1]
-			fmt.Printf("  sudo ./groot vmm --kernel kernel/%s/%s --rootfs rootfs/rootfs.ext4\n", k.Arch, k.Name)
+			fmt.Printf("  sudo ./litevm vmm --kernel kernel/%s/%s --rootfs rootfs/rootfs.ext4\n", k.Arch, k.Name)
 		}
 	}
 

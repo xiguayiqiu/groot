@@ -8,24 +8,24 @@ import (
 	"sort"
 	"strings"
 
-	"groot/internal/chroot"
-	"groot/internal/check"
-	"groot/internal/images"
-	"groot/internal/i18n"
-	"groot/internal/logger"
-	"groot/internal/mount"
-	"groot/internal/network"
-	"groot/internal/permission"
-	"groot/internal/proot"
-	"groot/internal/rootless"
-	"groot/internal/termux"
-	"groot/internal/vmm"
+	"litevm/internal/chroot"
+	"litevm/internal/check"
+	"litevm/internal/images"
+	"litevm/internal/i18n"
+	"litevm/internal/logger"
+	"litevm/internal/mount"
+	"litevm/internal/network"
+	"litevm/internal/permission"
+	"litevm/internal/proot"
+	"litevm/internal/rootless"
+	"litevm/internal/termux"
+	"litevm/internal/vmm"
 
 	"github.com/urfave/cli/v2"
 )
 
 const (
-	version = "0.4.0"
+	version = "1.0"
 )
 
 func detectDistro() string {
@@ -114,15 +114,32 @@ func main() {
 		return
 
 		case "-v", "--version":
-			fmt.Printf("groot version %s\n", version)
+			fmt.Printf("litevm version %s\n", version)
 			fmt.Println(i18n.T("cli.author.name"))
 			fmt.Println(i18n.T("cli.author.license"))
 			return
 		}
 	}
 
+	// 处理 --check 参数（需要在子命令路由之前处理）
+	if len(os.Args) > 1 && os.Args[1] == "--check" {
+		mode := check.ModeAll
+		if len(os.Args) > 2 {
+			switch os.Args[2] {
+			case "proot", "p":
+				mode = check.ModeProot
+			case "chroot", "c":
+				mode = check.ModeChroot
+			case "vmm", "vm":
+				mode = check.ModeVMM
+			}
+		}
+		check.RunCheck(mode)
+		return
+	}
+
 	app := &cli.App{
-		Name:        "groot",
+		Name:        "litevm",
 		Usage:       i18n.T("cli.usage.desc"),
 		Version:     version,
 		Copyright:   i18n.T("cli.copyright"),
@@ -164,7 +181,7 @@ func main() {
 							&cli.StringFlag{
 								Name:  "tap",
 								Usage: i18n.T("cli.vmm.tap"),
-								Value: "groot-tap0",
+								Value: "litevm-tap0",
 							},
 							&cli.StringFlag{
 								Name:  "host-ip",
@@ -181,8 +198,12 @@ func main() {
 								Usage: i18n.T("cli.vmm.kernel_args"),
 							},
 						},
-						Action: func(cCtx *cli.Context) error {
-							cfg := vmm.DefaultConfig()
+					Action: func(cCtx *cli.Context) error {
+						if !cCtx.IsSet("kernel") && !cCtx.IsSet("rootfs") {
+							return cli.ShowCommandHelp(cCtx, "run")
+						}
+
+						cfg := vmm.DefaultConfig()
 
 							if k := cCtx.String("kernel"); k != "" {
 								cfg.KernelPath = k
@@ -482,7 +503,7 @@ func main() {
 		},
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.Bool("v") || cCtx.Bool("version") {
-				fmt.Printf("groot version %s\n", version)
+				fmt.Printf("litevm version %s\n", version)
 				fmt.Println(i18n.T("cli.copyright"))
 				return nil
 			}
@@ -497,6 +518,8 @@ func main() {
 						mode = check.ModeProot
 					case "chroot", "c":
 						mode = check.ModeChroot
+					case "vmm", "vm":
+						mode = check.ModeVMM
 					}
 				}
 

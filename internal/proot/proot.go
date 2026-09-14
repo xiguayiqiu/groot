@@ -9,13 +9,13 @@ import (
 	"strings"
 	"syscall"
 
-	"groot/internal/cleanup"
-	"groot/internal/env"
-	"groot/internal/i18n"
-	"groot/internal/logger"
-	"groot/internal/slogan"
-	"groot/internal/termux"
-	"groot/internal/usercheck"
+	"litevm/internal/cleanup"
+	"litevm/internal/env"
+	"litevm/internal/i18n"
+	"litevm/internal/logger"
+	"litevm/internal/slogan"
+	"litevm/internal/termux"
+	"litevm/internal/usercheck"
 )
 
 // validateShellPath 验证 shell 路径是否安全
@@ -135,7 +135,7 @@ func Run(rootfsPath string, customShell string) error {
 	}
 
 	// 获取正确的 hostname
-	hostname := env.GetHostname(absRootfsPath, "groot-proot")
+	hostname := env.GetHostname(absRootfsPath, "litevm-proot")
 	hostname = truncateHostname(hostname)
 	logger.Debug("使用主机名: %s", hostname)
 

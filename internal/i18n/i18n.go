@@ -22,7 +22,7 @@ const TermuxHome = "/data/data/com.termux/files/home"
 // currentLang 当前语言
 var currentLang Lang = LangEN
 
-// configPath 语言配置文件路径 (~/.config/groot/lang)
+// configPath 语言配置文件路径 (~/.config/litevm/lang)
 var configPath string
 
 // Init 初始化国际化，检测语言设置
@@ -98,7 +98,7 @@ func SetLang(lang Lang) {
 // getLangConfigPath 获取语言配置文件路径
 func getLangConfigPath() string {
 	home := getHomeDir()
-	return filepath.Join(home, ".config", "groot", "lang")
+	return filepath.Join(home, ".config", "litevm", "lang")
 }
 
 // getHomeDir 获取 home 目录，Termux 使用固定路径
@@ -209,7 +209,7 @@ func detectFromTermuxLocaleConf(path string) Lang {
 // 导出函数，供 --termux-lang 参数调用
 func AskLanguageAndSave(termuxLocalePath string) {
 	fmt.Println()
-	fmt.Println("\033[36m[Groot]\033[0m \033[33mSelect Language / 选择语言:\033[0m")
+	fmt.Println("\033[36m[LiteVM]\033[0m \033[33mSelect Language / 选择语言:\033[0m")
 	fmt.Println()
 	fmt.Println("  1. English")
 	fmt.Println("  2. 中文")
@@ -249,7 +249,7 @@ func ShowTermuxLangTUI() {
 	termuxLocalePath := GetTermuxLocalePath()
 
 	// 显示当前配置
-	fmt.Println("\033[36m[Groot] Termux 语言配置\033[0m")
+	fmt.Println("\033[36m[LiteVM] Termux 语言配置\033[0m")
 	fmt.Println()
 
 	if data, err := os.ReadFile(termuxLocalePath); err == nil {

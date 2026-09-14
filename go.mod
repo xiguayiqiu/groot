@@ -1,4 +1,4 @@
-module groot
+module litevm
 
 go 1.26.2
 

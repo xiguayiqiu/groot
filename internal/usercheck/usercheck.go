@@ -9,8 +9,8 @@ import (
 	"strings"
 	"syscall"
 
-	"groot/internal/i18n"
-	"groot/internal/logger"
+	"litevm/internal/i18n"
+	"litevm/internal/logger"
 )
 
 type UserInfo struct {
@@ -241,7 +241,7 @@ func FixCommonIssues(rootfsPath string, userInfo *UserInfo) {
 	isRoot := os.Geteuid() == 0
 	if !isRoot {
 		logger.Warn("警告：非 root 权限运行，跳过深度权限修复！")
-		logger.Warn("建议：使用 sudo ./groot 以获得完整功能")
+		logger.Warn("建议：使用 sudo ./litevm 以获得完整功能")
 		return
 	}
 	logger.Info("当前是真实 root 权限，开始深度修复...")

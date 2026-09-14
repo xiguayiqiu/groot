@@ -1,8 +1,33 @@
 # Changelog
 
-本文档记录 groot 的所有版本更新日志。
+本文档记录 litevm 的所有版本更新日志。
 
-## V0.4.0 (2026-9-13) — 当前版本
+## V1.0 (2026-9-14) — 当前版本
+
+### 🆕 全新功能
+
+- **VMM 环境检查**：`--check` 命令新增 VMM 模式检查，检测 KVM 支持和 firecracker 安装情况
+  - `./litevm --check vmm` 单独检查 VMM 环境
+  - `./litevm --check` 全量检查（proot + chroot + VMM）
+- **Distro 适配网络**：`setup-network` 自动检测发行版，采用最佳持久化方式
+  - Arch: systemd 服务管理 TAP 生命周期
+  - Debian: systemd-networkd + NetworkManager dispatcher
+  - RHEL/Fedora: NetworkManager + firewalld/iptables
+
+### 🔧 修复与优化
+
+- **修复 setup-network 端口冲突**：dnsmasq 由 systemd 服务统一管理，避免与 `startDHCP()` 端口 67 冲突
+- **修复 dnsmasq daemonization**：服务文件添加 `--no-daemon`，避免 Type=simple 下 dnsmasq fork 后退出
+- **修复 iptables 失败终止服务**：ExecStartPost iptables 规则添加失败不杀死 dnsmasq
+- **修复 ExecStopPost shell 转义**：iptables `-` 前缀需用 `--` 分隔
+- **TAP 设备生命周期管理**：systemd 服务管理完整 TAP 生命周期（创建、IP、dnsmasq、NAT）
+- **TAP 设备清理保护**：`CleanupTapDevice` 在服务活跃时跳过清理
+- **i18n 消息清理**：移除消息值中的格式动词，统一 `fmt.Errorf("%s: %w")` 模式
+- **项目更名**：正式从 `groot` 更名为 `litevm`
+
+---
+
+## V0.4.0 (2026-9-13)
 
 ### 🆕 全新功能
 
@@ -13,7 +38,7 @@
   - 支持 x86_64 和 aarch64 双架构
   - 一键下载所有可用内核
   - VMM 命令重构为子命令：`run`、`download-kernel`、`setup-network`、`rm-network`
-- **VMM 网络配置**：新增 `groot vmm setup-network` 和 `groot vmm rm-network` 命令
+- **VMM 网络配置**：新增 `litevm vmm setup-network` 和 `litevm vmm rm-network` 命令
   - `setup-network`：一次性配置 TAP 设备、NAT、/dev/kvm 权限
   - `rm-network`：清除网络节点和相关配置
   - 支持无 root 运行：配置完成后日常使用无需 sudo
@@ -31,7 +56,7 @@
 - **修复 SetupTapDevice 跳过 dnsmasq**：TAP 已存在时仍确保 dnsmasq 在运行，支持 `--tap` 预创建 TAP 设备
 - **新增 `dnsmasqIsRunning()`**：通过 PID 文件检查 dnsmasq 是否已运行，避免重复启动
 - **修复 kernel download 显示问题**：进度条 `[====] 42%` 正确显示
-- **修复 host interface 检测**：`FindHostInterface` 排除 `groot-tap*` 前缀的 TAP 设备
+- **修复 host interface 检测**：`FindHostInterface` 排除 `litevm-tap*` 前缀的 TAP 设备
 - **修复 sudo 非交互执行**：所有网络命令采用直接执行-降级 sudo 模式
 - **修复 iptables 规则添加失败**：`|| true` 允许规则已存在时继续
 - **移除 logger.Debug 吞掉错误**：改为 `fmt.Fprintf(os.Stderr, ...)` 直接输出
@@ -72,9 +97,9 @@
   - 基于 LANG 环境变量自动检测语言，支持从配置文件、locale.conf、环境变量读取
   - Termux 环境自动读取 `~/.termux/locale.conf` 判断语言（`zh_CN.UTF-8` → 中文，其他 → 英文）
   - 新增 `--termux-lang` 参数，可随时唤起 TUI 切换 Termux 语言
-  - 用户可通过 `~/.config/groot/lang` 手动切换语言
+  - 用户可通过 `~/.config/litevm/lang` 手动切换语言
 - **替换所有源文件中的硬编码中文字符串**：
-  - `cmd/groot/main.go`：CLI 帮助文本、错误消息
+  - `cmd/litevm/main.go`：CLI 帮助文本、错误消息
   - `internal/chroot/chroot.go`：chroot 模式日志
   - `internal/proot/proot.go`：proot 模式日志
   - `internal/proot/alpine-proot.go`：Alpine 专属模式
@@ -95,10 +120,10 @@
 - **修复 rootfs 配置加载问题**：彻底移除所有硬编码环境变量，改为从 rootfs 配置文件自动加载
   - 移除硬编码：`LANG`、`LC_ALL`、`LC_CTYPE`、`EDITOR`、`VISUAL`、`PAGER`、`LESS`、`TMPDIR`、`MAIL`、`TZ`、`HISTFILE`、`HISTSIZE`、`HISTFILESIZE`、`XDG_*` 等
   - 移除所有发行版特定硬编码：`DEBIAN_FRONTEND`、`PACMAN`、`DNF`、`XBPS_*`、`SELINUX` 等
-  - 现在仅设置 groot 自身必需的变量：`HOME`、`USER`、`LOGNAME`、`SHELL`、`PWD`、`HOSTNAME`
+  - 现在仅设置 litevm 自身必需的变量：`HOME`、`USER`、`LOGNAME`、`SHELL`、`PWD`、`HOSTNAME`
   - 从 `/etc/locale.conf` 自动加载语言环境，并智能推导 `LC_ALL`、`LC_CTYPE`、`LANGUAGE`
   - 从 `/etc/environment` 自动加载系统级环境变量
-  - shell 脚本（`/etc/profile`、`/etc/profile.d/*.sh`、`~/.bashrc`）由 login shell 自行 source，不再由 groot 预解析
+  - shell 脚本（`/etc/profile`、`/etc/profile.d/*.sh`、`~/.bashrc`）由 login shell 自行 source，不再由 litevm 预解析
   - 修复了预解析 shell 脚本导致 `PS0`/`PS1` 等包含 shell 语法的变量被错误设为字面值的问题
 - **修复 pacman wrapper 问题**：移除 wrapper 中硬编码的 `export LC_ALL=C`，允许用户 locale 设置生效
 - **移除 pacman wrapper DEBUG 信息**：清理 `echo "DEBUG: ..."` 输出
@@ -124,9 +149,9 @@
 **使用方式：**
 ```bash
 # 启用网络隔离
-sudo ./groot -c /path/to/rootfs --net
+sudo ./litevm -c /path/to/rootfs --net
 # 或
-sudo ./groot -c /path/to/rootfs -net
+sudo ./litevm -c /path/to/rootfs -net
 ```
 
 **实现细节：**
@@ -145,7 +170,7 @@ sudo ./groot -c /path/to/rootfs -net
 - **自动挂载虚拟文件系统**：/proc、/sys、/dev、/dev/pts、/dev/shm、/tmp、/run 自动挂载到 rootfs 内
 - **主机名隔离**：容器拥有独立的 UTS namespace，主机名不影响宿主机
 - **就绪握手机制**：通过文件描述符管道（fd 3），父进程等待容器 init 就绪后再返回
-- **容器配置持久化**：容器配置存储在 `/usr/local/groot/lxc/containers/` 下的 JSON 文件中
+- **容器配置持久化**：容器配置存储在 `/usr/local/litevm/lxc/containers/` 下的 JSON 文件中
 
 **支持的子命令：**
 
@@ -189,7 +214,7 @@ sudo ./groot -c /path/to/rootfs -net
     - 移除 `cleanupNetworkInChild()` 中的 `ip link del lo` 危险命令，避免误删宿主机 loopback 接口
     - 添加网络清理超时机制，防止命令阻塞容器退出
   - **改进**: LXC 配置存储路径改为标准 Linux 路径
-    - 从 Termux 特定路径 `/data/data/com.termux/files/usr/share/groot/lxc` 改为 `/usr/local/groot/lxc`
+    - 从 Termux 特定路径 `/data/data/com.termux/files/usr/share/litevm/lxc` 改为 `/usr/local/litevm/lxc`
     - LXC 是标准 Linux 功能，配置应存储在标准位置
   - **修复**: 伪终端无法分配和桌面程序无法启动
     - 添加 `/dev/ptmx` 设备节点创建（符号链接到 `/dev/pts/ptmx`）
@@ -247,7 +272,7 @@ sudo ./groot -c /path/to/rootfs -net
   - 非终端输出时自动禁用颜色
   - 默认只显示 WARN/ERROR 级别日志，`--verbose` 显示完整 INFO 流程
 - **启动后打印彩色广告横幅**
-- **支持位置参数作为自定义 shell**：`groot -c rootfs /bin/bash`
+- **支持位置参数作为自定义 shell**：`litevm -c rootfs /bin/bash`
 - **新增 `-d/--download` 参数**：文本菜单选择发行版并用浏览器打开下载页面
   - 支持 Void Linux、Alpine、Kali、Arch 四款发行版下载链接
   - 纯文本菜单兼容 Termux
@@ -280,4 +305,4 @@ sudo ./groot -c /path/to/rootfs -net
 
 ## V0.1 (2026-5-3)
 
-- groot 的第一个版本
+- litevm 的第一个版本

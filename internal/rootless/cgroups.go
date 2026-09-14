@@ -10,7 +10,7 @@ import (
 	"github.com/opencontainers/cgroups"
 	"github.com/opencontainers/cgroups/fs2"
 	"golang.org/x/sys/unix"
-	"groot/internal/logger"
+	"litevm/internal/logger"
 )
 
 type CgroupConfig struct {
@@ -45,7 +45,7 @@ func NewCgroupManager(cfg *CgroupConfig) (*CgroupManager, error) {
 	}
 
 	if cfg.Name == "" {
-		cfg.Name = fmt.Sprintf("groot-%d", os.Getpid())
+		cfg.Name = fmt.Sprintf("litevm-%d", os.Getpid())
 	}
 
 	cgPath := filepath.Join("/sys/fs/cgroup", cfg.Name)

@@ -14,10 +14,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"groot/internal/slogan"
+	"litevm/internal/slogan"
 
-	"groot/internal/i18n"
-	"groot/internal/logger"
+	"litevm/internal/i18n"
+	"litevm/internal/logger"
 )
 
 // IsTermux 检测当前环境是否是 Termux 或基于 Termux 的改版。

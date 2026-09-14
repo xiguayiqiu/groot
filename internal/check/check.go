@@ -10,9 +10,9 @@ import (
 	"strings"
 	"syscall"
 
-	"groot/internal/i18n"
-	"groot/internal/permission"
-	"groot/internal/termux"
+	"litevm/internal/i18n"
+	"litevm/internal/permission"
+	"litevm/internal/termux"
 )
 
 type CheckMode int
@@ -21,6 +21,7 @@ const (
 	ModeAll   CheckMode = iota
 	ModeProot
 	ModeChroot
+	ModeVMM
 )
 
 type CheckResult struct {
@@ -72,12 +73,15 @@ func RunCheck(mode CheckMode) []CheckResult {
 		results = append(results, checkProotRequirements(info)...)
 	case ModeChroot:
 		results = append(results, checkChrootRequirements(info)...)
+	case ModeVMM:
+		results = append(results, checkVMMRequirements(info)...)
 	default:
 		// 无 root 只检查 proot，有 root 检查 proot + chroot
 		results = append(results, checkProotRequirements(info)...)
 		if info.IsRoot {
 			results = append(results, checkChrootRequirements(info)...)
 		}
+		results = append(results, checkVMMRequirements(info)...)
 	}
 
 	printResults(results, info, mode)
@@ -625,7 +629,7 @@ func checkProotKernelSupport() []CheckResult {
 func checkProotSyscall() []CheckResult {
 	var results []CheckResult
 
-	testFile := "/tmp/.groot_proot_test"
+	testFile := "/tmp/.litevm_proot_test"
 	if f, err := os.Create(testFile); err == nil {
 		f.Close()
 		os.Remove(testFile)
@@ -804,6 +808,93 @@ func checkChrootDeviceNodes() []CheckResult {
 	return results
 }
 
+func checkVMMRequirements(info *DeviceInfo) []CheckResult {
+	var results []CheckResult
+
+	kvmSupported := false
+	if _, err := os.Stat("/dev/kvm"); err == nil {
+		if info.IsRoot {
+			kvmSupported = true
+		} else {
+			// 非 root 用户需要检查 KVM 组权限
+			for _, g := range info.UserGroups {
+				if g == "kvm" {
+					kvmSupported = true
+					break
+				}
+			}
+		}
+	}
+
+	if kvmSupported {
+		results = append(results, CheckResult{
+			Name:     "KVM",
+			Passed:   true,
+			Message:  i18n.T("check.kvm_available"),
+			Critical: true,
+		})
+	} else {
+		msg := i18n.T("check.no_kvm")
+		if _, err := os.Stat("/dev/kvm"); err == nil {
+			// /dev/kvm 存在但权限不足
+			if !info.IsRoot {
+				msg = i18n.T("check.kvm_perm_denied")
+			}
+		} else {
+			msg = i18n.T("check.no_kvm_device")
+		}
+		results = append(results, CheckResult{
+			Name:     "KVM",
+			Passed:   false,
+			Message:  msg,
+			Critical: true,
+		})
+	}
+
+	firecrackerPath := findFirecracker()
+	if firecrackerPath != "" {
+		results = append(results, CheckResult{
+			Name:     "firecracker",
+			Passed:   true,
+			Message:  firecrackerPath,
+			Critical: true,
+		})
+	} else {
+		results = append(results, CheckResult{
+			Name:     "firecracker",
+			Passed:   false,
+			Message:  i18n.T("check.no_firecracker"),
+			Critical: true,
+		})
+	}
+
+	return results
+}
+
+func findFirecracker() string {
+	searchPaths := []string{
+		"/usr/local/bin/firecracker",
+		"/usr/bin/firecracker",
+		filepath.Join(os.Getenv("HOME"), "bin/firecracker"),
+		filepath.Join(os.Getenv("HOME"), ".local/bin/firecracker"),
+	}
+
+	for _, p := range searchPaths {
+		if info, err := os.Stat(p); err == nil {
+			// 检查是否可执行
+			if info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+				return p
+			}
+		}
+	}
+
+	if path, err := termux.SafeLookPath("firecracker"); err == nil {
+		return path
+	}
+
+	return ""
+}
+
 func checkCommands(info *DeviceInfo) []CheckResult {
 	var results []CheckResult
 
@@ -964,7 +1055,7 @@ func checkFilesystem(info *DeviceInfo) []CheckResult {
 
 	if tmpDir != "" {
 		if err := os.MkdirAll(tmpDir, 0755); err == nil {
-			testFile := filepath.Join(tmpDir, ".groot_test")
+			testFile := filepath.Join(tmpDir, ".litevm_test")
 			if f, err := os.Create(testFile); err == nil {
 				f.Close()
 				os.Remove(testFile)
@@ -1046,12 +1137,10 @@ func printResults(results []CheckResult, info *DeviceInfo, mode CheckMode) {
 		fmt.Println("    " + i18n.T("check.proot_report"))
 	case ModeChroot:
 		fmt.Println("    " + i18n.T("check.chroot_report"))
+	case ModeVMM:
+		fmt.Println("    " + i18n.T("check.vmm_report"))
 	default:
-		if info.IsRoot {
-			fmt.Println("    " + i18n.T("check.full_report"))
-		} else {
-			fmt.Println("    " + i18n.T("check.proot_report"))
-		}
+		fmt.Println("    " + i18n.T("check.full_report"))
 	}
 
 	fmt.Println("====================================")
@@ -1104,6 +1193,8 @@ func printResults(results []CheckResult, info *DeviceInfo, mode CheckMode) {
 			fmt.Printf("\n  %s\n", i18n.T("check.proot_supported"))
 		case ModeChroot:
 			fmt.Printf("\n  %s\n", i18n.T("check.chroot_supported"))
+		case ModeVMM:
+			fmt.Printf("\n  %s\n", i18n.T("check.vmm_supported"))
 		default:
 			fmt.Printf("\n  %s\n", i18n.T("check.full_support_msg"))
 		}
@@ -1115,6 +1206,8 @@ func printResults(results []CheckResult, info *DeviceInfo, mode CheckMode) {
 			fmt.Printf("\n  %s\n", i18n.T("check.proot_limited_hint"))
 		case ModeChroot:
 			fmt.Printf("\n  %s\n", i18n.T("check.chroot_limited_hint"))
+		case ModeVMM:
+			fmt.Printf("\n  %s\n", i18n.T("check.vmm_limited_hint"))
 		default:
 			fmt.Printf("\n  %s\n", i18n.T("check.partial_limited_hint"))
 		}
@@ -1125,22 +1218,30 @@ func printResults(results []CheckResult, info *DeviceInfo, mode CheckMode) {
 	switch mode {
 	case ModeProot:
 		fmt.Printf("  %s\n", i18n.T("check.hint"))
-		fmt.Println("    - 使用 ./groot --check proot 检查 proot 环境")
-		fmt.Println("    - 使用 ./groot -p <rootfs> 进入 proot 模式")
+		fmt.Println("    - 使用 ./litevm --check proot 检查 proot 环境")
+		fmt.Println("    - 使用 ./litevm -p <rootfs> 进入 proot 模式")
 	case ModeChroot:
 		fmt.Printf("  %s\n", i18n.T("check.hint"))
-		fmt.Println("    - 使用 ./groot --check chroot 检查 chroot 环境")
-		fmt.Println("    - 使用 ./groot -c <rootfs> 进入 chroot 模式")
+		fmt.Println("    - 使用 ./litevm --check chroot 检查 chroot 环境")
+		fmt.Println("    - 使用 ./litevm -c <rootfs> 进入 chroot 模式")
+	case ModeVMM:
+		fmt.Printf("  %s\n", i18n.T("check.hint"))
+		fmt.Println("    - 使用 ./litevm --check vmm 检查 VMM 环境")
+		fmt.Println("    - 使用 ./litevm vmm run --kernel <path> --rootfs <path> --net 启动 VM")
 	default:
 		fmt.Printf("  %s\n", i18n.T("check.hint"))
 		if info.IsRoot {
-			fmt.Println("    - 使用 ./groot --check proot 检查 proot 环境")
-			fmt.Println("    - 使用 ./groot --check chroot 检查 chroot 环境")
-			fmt.Println("    - 使用 ./groot -p <rootfs> 进入 proot 模式")
-			fmt.Println("    - 使用 ./groot -c <rootfs> 进入 chroot 模式")
+			fmt.Println("    - 使用 ./litevm --check proot 检查 proot 环境")
+			fmt.Println("    - 使用 ./litevm --check chroot 检查 chroot 环境")
+			fmt.Println("    - 使用 ./litevm --check vmm 检查 VMM 环境")
+			fmt.Println("    - 使用 ./litevm -p <rootfs> 进入 proot 模式")
+			fmt.Println("    - 使用 ./litevm -c <rootfs> 进入 chroot 模式")
+			fmt.Println("    - 使用 ./litevm vmm run --kernel <path> --rootfs <path> --net 启动 VM")
 		} else {
-			fmt.Println("    - 使用 ./groot --check proot 检查 proot 环境")
-			fmt.Println("    - 使用 ./groot -p <rootfs> 进入 proot 模式")
+			fmt.Println("    - 使用 ./litevm --check proot 检查 proot 环境")
+			fmt.Println("    - 使用 ./litevm --check vmm 检查 VMM 环境")
+			fmt.Println("    - 使用 ./litevm -p <rootfs> 进入 proot 模式")
+			fmt.Println("    - 使用 ./litevm vmm run --kernel <path> --rootfs <path> --net 启动 VM")
 		}
 	}
 
