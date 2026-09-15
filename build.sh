@@ -9,7 +9,7 @@ set -e
 
 PROJECT_NAME="litevm"
 OUTPUT_DIR="build"
-VERSION="1.0"
+VERSION="1.1"
 PACKAGE_LICENSE="MIT"
 PACKAGE_URL="https://gyscan.space"
 PACKAGE_DESCRIPTION="Go 版双模式隔离工具（chroot/proot）- 轻量级 Linux 容器环境"
