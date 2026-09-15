@@ -1573,8 +1573,8 @@ var messages = map[string]map[Lang]string{
 		LangEN: "Specify rootfs image path (default: rootfs/rootfs.ext4)",
 	},
 	"cli.vmm.mem": {
-		LangZH: "指定内存大小（MB，默认: 256）",
-		LangEN: "Specify memory size in MB (default: 256)",
+		LangZH: "指定内存大小（MB，默认: 1024）",
+		LangEN: "Specify memory size in MB (default: 1024)",
 	},
 	"cli.vmm.cpus": {
 		LangZH: "指定 CPU 核心数（默认: 2）",

@@ -2,7 +2,25 @@
 
 本文档记录 litevm 的所有版本更新日志。
 
-## V1.0 (2026-9-14) — 当前版本
+## V1.1 (2026-9-15) — 当前版本
+
+### 🔧 修复与优化
+
+- **VMM 默认内存从 256MB 调整为 1GB**：默认内存过小导致多数 Linux 发行版无法正常运行，现默认 1024MB
+  - `DefaultConfig()` `MemSizeMB` 从 256 改为 1024
+  - CLI `--mem` flag 默认值同步更新
+- **减少 VMM 内核启动噪声**：默认内核启动参数追加 `quiet loglevel=3`，抑制启动时大量内核日志输出到串口
+- **chroot 模式新增标准 Linux 虚拟设备节点**：
+  - 虚拟终端：`/dev/tty0` ~ `/dev/tty63`
+  - 串口设备：`/dev/ttyS0` ~ `/dev/ttyS3`
+  - ARM 串口：`/dev/ttyAMA0`、`/dev/ttyAMA1`
+  - 虚拟串口：`/dev/ttyV0` ~ `/dev/ttyV3`
+  - virtio 虚拟控制台：`/dev/hvc0` ~ `/dev/hvc3`
+  - Xen 虚拟控制台：`/dev/xvc0`、`/dev/uvhvc0`
+
+---
+
+## V1.0 (2026-9-14)
 
 ### 🆕 全新功能
 
@@ -17,6 +35,8 @@
 ### 🔧 修复与优化
 
 - **修复 setup-network 端口冲突**：dnsmasq 由 systemd 服务统一管理，避免与 `startDHCP()` 端口 67 冲突
+- **修复 VMM 关机后卡死**：guest 内执行 `poweroff`/`halt` 后，Firecracker 进程不会自行退出（已知限制），`litevm vmm run` 会一直卡在内核停机画面，无法回到宿主 shell。现在 litevm 会监视串口输出中的关机标记（`reboot: System halted`/`reboot: Power down` 等，对 systemd/openrc/runit 通用），检测到 guest 关机后自动停止并退出 microVM，恢复正常返回宿主 shell
+- **VMM 支持 reboot 正常重启**：guest 内执行 `reboot` 时内核会 reset CPU 导致 Firecracker 进程退出（Firecracker 已知行为），`litevm vmm run` 之前会因此直接结束。现在 litevm 会识别重启标记（`reboot: Restarting system` 等）并自动以相同配置重新拉起 microVM，让 `reboot` 表现为主机正常重启；`poweroff` 仍然退出
 - **修复 dnsmasq daemonization**：服务文件添加 `--no-daemon`，避免 Type=simple 下 dnsmasq fork 后退出
 - **修复 iptables 失败终止服务**：ExecStartPost iptables 规则添加失败不杀死 dnsmasq
 - **修复 ExecStopPost shell 转义**：iptables `-` 前缀需用 `--` 分隔

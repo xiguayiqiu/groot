@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	version = "1.0"
+	version = "1.1"
 )
 
 func detectDistro() string {
@@ -166,7 +166,7 @@ func main() {
 							&cli.StringFlag{
 								Name:  "mem",
 								Usage: i18n.T("cli.vmm.mem"),
-								Value: "256",
+								Value: "1024",
 							},
 							&cli.IntFlag{
 								Name:  "cpus",
