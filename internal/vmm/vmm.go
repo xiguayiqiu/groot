@@ -16,6 +16,7 @@ import (
 
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
+	"litevm/internal/i18n"
 	"litevm/internal/logger"
 )
 
@@ -23,7 +24,7 @@ const (
 	defaultKernelPath    = "kernel/amd64/vmlinux.bin"
 	defaultRootfsPath    = "rootfs/rootfs.ext4"
 	defaultSocketPath    = "/tmp/litevm-firecracker.socket"
-	defaultKernelCmdline = "console=ttyS0,115200n8 reboot=k panic=1 nomodule quiet loglevel=3"
+	defaultKernelCmdline = "console=ttyS0,115200n8 reboot=k panic=1 nomodule loglevel=5"
 )
 
 // guestShutdownMarkers 是 Linux 内核 / init 系统在 guest 关机停机时打印到串口的
@@ -50,6 +51,197 @@ var guestRebootMarkers = []string{
 	"requesting system restart",   // sysvinit
 	"requesting system reboot",    // sysvinit
 	"for reboot now",              // sysvinit（"The system is going down for reboot NOW"）
+}
+
+// DiskFormat represents the on-disk format of a virtual disk image.
+type DiskFormat int
+
+const (
+	DiskFormatRaw    DiskFormat = iota // raw / dd / img
+	DiskFormatQCOW2                    // QEMU Copy-On-Write v2
+	DiskFormatVMDK                     // VMware Virtual Machine Disk
+	DiskFormatVHD                      // Microsoft Virtual Hard Disk
+	DiskFormatISO                      // ISO 9660 optical disc image
+	DiskFormatUnknown
+)
+
+func (f DiskFormat) String() string {
+	switch f {
+	case DiskFormatRaw:
+		return "raw"
+	case DiskFormatQCOW2:
+		return "qcow2"
+	case DiskFormatVMDK:
+		return "vmdk"
+	case DiskFormatVHD:
+		return "vhd"
+	case DiskFormatISO:
+		return "iso"
+	default:
+		return "unknown"
+	}
+}
+
+// DetectDiskFormat detects the disk format from the file extension and magic bytes.
+func DetectDiskFormat(path string) DiskFormat {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".iso":
+		return DiskFormatISO
+	case ".qcow2":
+		return DiskFormatQCOW2
+	case ".vmdk":
+		return DiskFormatVMDK
+	case ".vhd", ".vhdx":
+		return DiskFormatVHD
+	case ".raw", ".img", ".bin", ".ext4", ".ext3", ".ext2", ".rootfs":
+		return DiskFormatRaw
+	}
+
+	// Fallback: check magic bytes
+	f, err := os.Open(path)
+	if err != nil {
+		return DiskFormatUnknown
+	}
+	defer f.Close()
+
+	header := make([]byte, 16)
+	if _, err := f.Read(header); err != nil {
+		return DiskFormatUnknown
+	}
+
+	// QCOW2 magic: "QFI\xfb"
+	if len(header) >= 4 && header[0] == 'Q' && header[1] == 'F' && header[2] == 'I' && header[3] == 0xfb {
+		return DiskFormatQCOW2
+	}
+	// VMDK magic: "KDMV" (VMDK sparse) or "VMDK" (VMDK descriptor)
+	if len(header) >= 4 && ((header[0] == 'K' && header[1] == 'D' && header[2] == 'M' && header[3] == 'V') ||
+		(header[0] == 'V' && header[1] == 'M' && header[2] == 'D' && header[3] == 'K')) {
+		return DiskFormatVMDK
+	}
+	// VHD magic: "conectix"
+	if len(header) >= 8 && header[0] == 'c' && header[1] == 'o' && header[2] == 'n' && header[3] == 'e' &&
+		header[4] == 'c' && header[5] == 't' && header[6] == 'i' && header[7] == 'x' {
+		return DiskFormatVHD
+	}
+	// ISO 9660: "CD001" at offset 0x8001
+	isoHeader := make([]byte, 6)
+	if _, err := f.ReadAt(isoHeader, 0x8001); err == nil {
+		if isoHeader[0] == 'C' && isoHeader[1] == 'D' && isoHeader[2] == '0' && isoHeader[3] == '0' && isoHeader[4] == '1' {
+			return DiskFormatISO
+		}
+	}
+
+	// If it has a common raw-like extension, treat as raw
+	switch ext {
+	case ".img", ".raw", ".bin", ".ext4", ".ext3", ".ext2", ".rootfs":
+		return DiskFormatRaw
+	}
+
+	return DiskFormatUnknown
+}
+
+// IsReadOnlyFormat returns true if the format is naturally read-only (ISO).
+func IsReadOnlyFormat(f DiskFormat) bool {
+	return f == DiskFormatISO
+}
+
+// ConvertToRaw converts a disk image from the given format to raw format.
+// Returns the path to the raw file. If the input is already raw, returns the original path.
+// The caller should NOT remove the returned path if it is the same as inputPath.
+func ConvertToRaw(inputPath string, format DiskFormat) (string, func(), error) {
+	if format == DiskFormatRaw || format == DiskFormatISO {
+		return inputPath, func() {}, nil
+	}
+
+	qemuImg, err := findQemuImg()
+	if err != nil {
+		return "", nil, fmt.Errorf("%s: %w", i18n.T("vmm.disk.error.qemu_img_not_found"), err)
+	}
+
+	outputPath := inputPath + ".raw"
+	// Remove stale converted file
+	os.Remove(outputPath)
+
+	logger.Info("Converting %s (%s) to raw format...", filepath.Base(inputPath), format)
+	cmd := exec.Command(qemuImg, "convert", "-f", format.String(), "-O", "raw", inputPath, outputPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		os.Remove(outputPath)
+		return "", nil, fmt.Errorf("qemu-img convert failed: %w", err)
+	}
+
+	cleanup := func() { os.Remove(outputPath) }
+	return outputPath, cleanup, nil
+}
+
+// findQemuImg locates the qemu-img binary.
+func findQemuImg() (string, error) {
+	if path, err := exec.LookPath("qemu-img"); err == nil {
+		return path, nil
+	}
+	for _, p := range []string{"/usr/bin/qemu-img", "/usr/local/bin/qemu-img", "/opt/qemu/bin/qemu-img"} {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("qemu-img not found. Install qemu-utils (Debian/Ubuntu) or qemu-img (RHEL/Fedora)")
+}
+
+// CreateRawDisk creates a new raw ext4 disk of the specified size.
+// sizeStr accepts formats like "512M", "1G", "10G".
+func CreateRawDisk(outputPath string, sizeStr string) error {
+	qemuImg, err := findQemuImg()
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("vmm.disk.error.qemu_img_not_found"), err)
+	}
+
+	cmd := exec.Command(qemuImg, "create", "-f", "raw", outputPath, sizeStr)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to create raw disk: %w", err)
+	}
+
+	// Format as ext4
+	mkfs, err := exec.LookPath("mkfs.ext4")
+	if err != nil {
+		return fmt.Errorf("mkfs.ext4 not found: %w", err)
+	}
+
+	logger.Info("Formatting %s as ext4...", filepath.Base(outputPath))
+	cmd = exec.Command(mkfs, "-F", "-q", outputPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		os.Remove(outputPath)
+		return fmt.Errorf("mkfs.ext4 failed: %w", err)
+	}
+
+	return nil
+}
+
+// DriveConfig represents an additional drive to attach to the VM.
+type DriveConfig struct {
+	ID         string // unique drive ID
+	Path       string // host path (may be qcow2/vmdk/vhd/raw/iso)
+	ReadOnly   bool   // mount read-only
+	IsRoot     bool   // is this the root device
+	CacheType  string // "Unsafe" or "Writeback"
+}
+
+// BalloonConfig represents a virtio-balloon device configuration.
+type BalloonConfig struct {
+	AmountMib           int64  // target balloon size in MiB
+	DeflateOnOom        bool   // deflate when guest has memory pressure
+	StatsPollingSeconds int64  // interval for statistics refresh, 0 = disabled
+}
+
+// VsockConfig represents a virtio-vsock device configuration.
+type VsockConfig struct {
+	GuestCID int64  // guest CID (must be >= 3)
+	UDSPath  string // host-side Unix domain socket path
 }
 
 // serialTailMax 是串口滚动窗口大小：只扫描最近一小段输出，避免误匹配到运行期
@@ -156,6 +348,10 @@ type Config struct {
 	HostIP      string
 	GuestIP     string
 	KernelArgs  string
+
+	ExtraDrives []DriveConfig // additional block devices (data disks, ISO, etc.)
+	Balloon     *BalloonConfig // optional balloon device
+	Vsock       *VsockConfig   // optional vsock device
 }
 
 func DefaultConfig() Config {
@@ -239,6 +435,15 @@ func Run(cfg Config) error {
 		logger.Info("Starting microVM...")
 		if err := m.Start(ctx); err != nil {
 			return fmt.Errorf("failed to start machine: %w", err)
+		}
+
+		// Create balloon device after machine starts (if configured)
+		if cfg.Balloon != nil {
+			if err := m.CreateBalloon(ctx, cfg.Balloon.AmountMib, cfg.Balloon.DeflateOnOom, cfg.Balloon.StatsPollingSeconds); err != nil {
+				logger.Warn("Failed to create balloon device: %v", err)
+			} else {
+				logger.Info("Balloon device created: %d MB", cfg.Balloon.AmountMib)
+			}
 		}
 
 		logger.Info("microVM started. Press Ctrl+A then x to exit.")
@@ -342,6 +547,11 @@ func validatePaths(cfg Config) error {
 	if _, err := os.Stat(cfg.RootfsPath); os.IsNotExist(err) {
 		return fmt.Errorf("rootfs not found: %s", cfg.RootfsPath)
 	}
+	for _, d := range cfg.ExtraDrives {
+		if _, err := os.Stat(d.Path); os.IsNotExist(err) {
+			return fmt.Errorf("drive not found: %s", d.Path)
+		}
+	}
 	return nil
 }
 
@@ -380,8 +590,32 @@ func buildConfig(cfg Config) firecracker.Config {
 
 	kernelArgs := cfg.KernelArgs
 	if cfg.EnableNet {
-		// Use DHCP for automatic IP configuration
 		kernelArgs += " ip=dhcp"
+	}
+
+	// Build drives list: root drive first, then extra drives
+	drives := []models.Drive{
+		{
+			DriveID:      &driveID,
+			PathOnHost:   firecracker.String(filepath.Clean(cfg.RootfsPath)),
+			IsRootDevice: &isRootDevice,
+			IsReadOnly:   &isReadOnly,
+		},
+	}
+
+	for _, extra := range cfg.ExtraDrives {
+		id := extra.ID
+		ro := extra.ReadOnly
+		d := models.Drive{
+			DriveID:      &id,
+			PathOnHost:   firecracker.String(filepath.Clean(extra.Path)),
+			IsRootDevice: firecracker.Bool(extra.IsRoot),
+			IsReadOnly:   &ro,
+		}
+		if extra.CacheType != "" {
+			d.CacheType = &extra.CacheType
+		}
+		drives = append(drives, d)
 	}
 
 	fcCfg := firecracker.Config{
@@ -389,18 +623,11 @@ func buildConfig(cfg Config) firecracker.Config {
 		KernelImagePath: filepath.Clean(cfg.KernelPath),
 		KernelArgs:      kernelArgs,
 		MachineCfg: models.MachineConfiguration{
-			VcpuCount:   firecracker.Int64(int64(cfg.Vcpus)),
-			MemSizeMib:  firecracker.Int64(int64(cfg.MemSizeMB)),
-			Smt:         firecracker.Bool(false),
+			VcpuCount:  firecracker.Int64(int64(cfg.Vcpus)),
+			MemSizeMib: firecracker.Int64(int64(cfg.MemSizeMB)),
+			Smt:        firecracker.Bool(false),
 		},
-		Drives: []models.Drive{
-			{
-			 DriveID:      &driveID,
-			 PathOnHost:   firecracker.String(filepath.Clean(cfg.RootfsPath)),
-			 IsRootDevice: &isRootDevice,
-			 IsReadOnly:   &isReadOnly,
-			},
-		},
+		Drives:      drives,
 		LogLevel:    "Info",
 		MetricsPath: "/dev/null",
 	}
@@ -412,6 +639,19 @@ func buildConfig(cfg Config) firecracker.Config {
 					MacAddress:  "AA:FC:00:00:00:01",
 					HostDevName: cfg.TapDevice,
 				},
+			},
+		}
+	}
+
+	// Balloon device is configured after machine creation via CreateBalloon()
+	if cfg.Vsock != nil {
+		cid := uint32(cfg.Vsock.GuestCID)
+		uds := cfg.Vsock.UDSPath
+		fcCfg.VsockDevices = []firecracker.VsockDevice{
+			{
+				ID:   "vsock0",
+				Path: uds,
+				CID:  cid,
 			},
 		}
 	}

@@ -311,12 +311,12 @@ func downloadKernel(k KernelInfo) error {
 	destPath := filepath.Join(kernelDir, k.Name)
 
 	if _, err := os.Stat(destPath); err == nil {
-		fmt.Printf(i18n.Tf("vmm.download.skip", k.Name)+"\n")
+		fmt.Printf("%s\n", i18n.Tf("vmm.download.skip", k.Name))
 		return nil
 	}
 
 	downloadURL := fmt.Sprintf("%s/%s", s3BaseURL, k.Key)
-	fmt.Printf(i18n.Tf("vmm.download.progress", k.Name, formatSize(k.Size))+"\n")
+	fmt.Printf("%s\n", i18n.Tf("vmm.download.progress", k.Name, formatSize(k.Size)))
 
 	resp, err := http.Get(downloadURL)
 	if err != nil {
@@ -349,7 +349,7 @@ func downloadKernel(k KernelInfo) error {
 		return fmt.Errorf("failed to rename file: %w", err)
 	}
 
-	fmt.Printf(i18n.Tf("vmm.download.success", k.Name, destPath)+"\n")
+	fmt.Printf("%s\n", i18n.Tf("vmm.download.success", k.Name, destPath))
 	return nil
 }
 
@@ -362,7 +362,7 @@ func DownloadKernel(downloadAll bool, arch string) error {
 	}
 
 	fmt.Println(i18n.T("vmm.download.fetching"))
-	fmt.Printf(i18n.Tf("vmm.download.table_header", strings.Join(archs, ", "))+"\n\n")
+	fmt.Printf("%s\n\n", i18n.Tf("vmm.download.table_header", strings.Join(archs, ", ")))
 
 	var allKernels []KernelInfo
 	for _, a := range archs {
@@ -375,21 +375,21 @@ func DownloadKernel(downloadAll bool, arch string) error {
 	}
 
 	if len(allKernels) == 0 {
-		return fmt.Errorf(i18n.T("vmm.download.no_kernels"))
+		return fmt.Errorf("%s", i18n.T("vmm.download.no_kernels"))
 	}
 
 	printKernelList(allKernels)
 
 	if downloadAll {
-		fmt.Printf(i18n.Tf("vmm.download.downloading_all", len(allKernels))+"\n\n")
+		fmt.Printf("%s\n\n", i18n.Tf("vmm.download.downloading_all", len(allKernels)))
 		var failed int
 		for _, k := range allKernels {
 			if err := downloadKernel(k); err != nil {
-				fmt.Printf(i18n.Tf("vmm.download.error", err)+"\n")
+				fmt.Printf("%s\n", i18n.Tf("vmm.download.error", err))
 				failed++
 			}
 		}
-		fmt.Printf("\n"+i18n.Tf("vmm.download.done", len(allKernels)-failed, len(allKernels))+"\n")
+		fmt.Printf("\n%s\n", i18n.Tf("vmm.download.done", len(allKernels)-failed, len(allKernels)))
 		return nil
 	}
 
@@ -416,16 +416,16 @@ func DownloadKernel(downloadAll bool, arch string) error {
 		}
 	}
 
-	fmt.Printf(i18n.Tf("vmm.download.downloading", len(toDownload))+"\n\n")
+	fmt.Printf("%s\n\n", i18n.Tf("vmm.download.downloading", len(toDownload)))
 	var failed int
 	for _, idx := range toDownload {
 		if err := downloadKernel(allKernels[idx-1]); err != nil {
-			fmt.Printf(i18n.Tf("vmm.download.error", err)+"\n")
+			fmt.Printf("%s\n", i18n.Tf("vmm.download.error", err))
 			failed++
 		}
 	}
 
-	fmt.Printf("\n"+i18n.Tf("vmm.download.done", len(toDownload)-failed, len(toDownload))+"\n")
+	fmt.Printf("\n%s\n", i18n.Tf("vmm.download.done", len(toDownload)-failed, len(toDownload)))
 
 	if failed == 0 && len(toDownload) > 0 {
 		fmt.Printf("\n")

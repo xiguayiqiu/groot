@@ -2,7 +2,38 @@
 
 本文档记录 litevm 的所有版本更新日志。
 
-## V1.1 (2026-9-15) — 当前版本
+## V1.2 (2026-9-16) — 当前版本
+
+### 🆕 全新功能
+
+- **多块设备支持**：`vmm run` 新增 `--drive` 参数，可附加多个额外块设备
+  - 格式：`--drive path[:id][:ro]`，支持重复使用
+  - 支持 raw、qcow2、vmdk、vhd、iso 格式，非 raw 格式自动通过 `qemu-img convert` 转换
+  - 示例：`--drive /data/disk.qcow2:mydata:ro`
+- **ISO 光盘挂载**：新增 `--cdrom` 参数，将 ISO 镜像作为只读块设备挂载
+  - 自动检测 ISO 9660 格式
+  - 示例：`--cdrom /path/to/install.iso`
+- **虚拟磁盘挂载**：新增 `--hd` 参数，将已有的虚拟磁盘文件作为额外块设备挂载
+  - Linux 内不自动挂载，需通过 fstab 决定挂载行为
+  - 示例：`--hd /path/to/data.ext4`
+- **Balloon 内存气球**：新增 `--balloon` 参数，启用 virtio-balloon 设备动态调整内存
+  - 配合 `--balloon-deflate-on-oom` 在 guest OOM 时自动 deflate
+  - 示例：`--balloon 256 --balloon-deflate-on-oom`
+- **Vsock 通信**：新增 `--vsock` 参数，启用 virtio-vsock host-guest 通信通道
+  - 格式：`--vsock cid` 或 `--vsock cid:uds_path`
+  - 示例：`--vsock 3` 或 `--vsock 5:/run/litevm/vsock.sock`
+- **磁盘格式自动检测**：通过文件扩展名和 magic bytes 自动识别 raw/qcow2/vmdk/vhd/iso 格式
+
+### 🔧 修复与优化
+
+- **修复 `litevm vmm run` 无参数帮助信息**：无参数时正确显示完整的命令帮助（所有可用选项），与 `--help` 输出一致
+- **显示 init 启动日志**：移除默认内核参数中的 `quiet`，将 `loglevel=3` 改为 `loglevel=5`，使 systemd/openrc/runit 等 init 系统的启动日志在串口可见
+- **修复 download.go vet 警告**：修正 `fmt.Printf` 中非恒定格式字符串的问题
+- **i18n 国际化**：新增 VMM 设备相关的中英文翻译消息
+
+---
+
+## V1.1 (2026-9-15)
 
 ### 🔧 修复与优化
 

@@ -1936,4 +1936,89 @@ var messages = map[string]map[Lang]string{
 		LangZH: "说明: QS = 官方预编译, CI = Firecracker CI 最新构建",
 		LangEN: "Legend: QS = Quickstart (official), CI = Firecracker CI (latest build)",
 	},
+
+	// ==========================================
+	// VMM Devices (internal/vmm/vmm.go) - new
+	// ==========================================
+
+	"cli.vmm.drive": {
+		LangZH: "附加额外块设备（格式: path[:id][:ro]，可重复使用，支持 raw/qcow2/vmdk/vhd/iso）",
+		LangEN: "Attach extra block device (format: path[:id][:ro], repeatable, supports raw/qcow2/vmdk/vhd/iso)",
+	},
+	"cli.vmm.cdrom": {
+		LangZH: "挂载 ISO 光盘镜像作为只读块设备（路径）",
+		LangEN: "Mount ISO image as read-only block device (path)",
+	},
+	"cli.vmm.hd": {
+		LangZH: "挂载一个虚拟磁盘文件作为额外块设备（Linux 内不自动挂载，需通过 fstab 决定挂载行为）",
+		LangEN: "Attach a virtual disk file as extra block device (not auto-mounted in Linux, mount via fstab)",
+	},
+	"cli.vmm.balloon": {
+		LangZH: "启用 virtio-balloon 内存气球设备（格式: size，如 128/256M，单位 MB）",
+		LangEN: "Enable virtio-balloon memory balloon device (format: size, e.g. 128/256M, unit MB)",
+	},
+	"cli.vmm.balloon_oom": {
+		LangZH: "balloon 在 guest 内存压力时自动 deflate",
+		LangEN: "Balloon deflates automatically on guest OOM",
+	},
+	"cli.vmm.vsock": {
+		LangZH: "启用 virtio-vsock 设备（格式: cid 或 cid:uds_path）",
+		LangEN: "Enable virtio-vsock device (format: cid or cid:uds_path)",
+	},
+	"vmm.disk.detecting": {
+		LangZH: "检测到磁盘格式: %s（文件: %s）",
+		LangEN: "Detected disk format: %s (file: %s)",
+	},
+	"vmm.disk.converting": {
+		LangZH: "正在将 %s 转换为 raw 格式...",
+		LangEN: "Converting %s to raw format...",
+	},
+	"vmm.disk.convert_done": {
+		LangZH: "转换完成: %s",
+		LangEN: "Conversion complete: %s",
+	},
+	"vmm.disk.convert_fail": {
+		LangZH: "格式转换失败: %v",
+		LangEN: "Format conversion failed: %v",
+	},
+	"vmm.disk.error.qemu_img_not_found": {
+		LangZH: "未找到 qemu-img，请安装 qemu-utils（Debian/Ubuntu）或 qemu-img（RHEL/Fedora）",
+		LangEN: "qemu-img not found, install qemu-utils (Debian/Ubuntu) or qemu-img (RHEL/Fedora)",
+	},
+	"vmm.disk.error.qemu_img_convert_fail": {
+		LangZH: "qemu-img 转换失败",
+		LangEN: "qemu-img conversion failed",
+	},
+	"vmm.disk.error.mkfs_not_found": {
+		LangZH: "未找到 mkfs.ext4",
+		LangEN: "mkfs.ext4 not found",
+	},
+	"vmm.disk.error.create_fail": {
+		LangZH: "创建虚拟磁盘失败: %v",
+		LangEN: "Failed to create virtual disk: %v",
+	},
+	"vmm.disk.attached": {
+		LangZH: "已附加块设备: %s (%s, %s)",
+		LangEN: "Attached block device: %s (%s, %s)",
+	},
+	"vmm.balloon.enabled": {
+		LangZH: "已启用 balloon 设备: %d MB",
+		LangEN: "Balloon device enabled: %d MB",
+	},
+	"vmm.vsock.enabled": {
+		LangZH: "已启用 vsock 设备: CID=%d, UDS=%s",
+		LangEN: "Vsock device enabled: CID=%d, UDS=%s",
+	},
+	"vmm.hd.creating": {
+		LangZH: "正在创建 %s ext4 虚拟磁盘: %s",
+		LangEN: "Creating %s ext4 virtual disk: %s",
+	},
+	"vmm.hd.created": {
+		LangZH: "虚拟磁盘已创建: %s（Linux 内需通过 fstab 挂载）",
+		LangEN: "Virtual disk created: %s (mount via fstab inside Linux)",
+	},
+	"vmm.cdrom.attached": {
+		LangZH: "已挂载 ISO: %s（只读）",
+		LangEN: "Mounted ISO: %s (read-only)",
+	},
 }

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"litevm/internal/chroot"
@@ -25,7 +26,7 @@ import (
 )
 
 const (
-	version = "1.1"
+	version = "1.2"
 )
 
 func detectDistro() string {
@@ -152,55 +153,102 @@ func main() {
 					{
 						Name:  "run",
 						Usage: i18n.T("cli.vmm.run"),
-						Flags: []cli.Flag{
-							&cli.StringFlag{
-								Name:    "kernel",
-								Aliases: []string{"k"},
-								Usage:   i18n.T("cli.vmm.kernel"),
-							},
-							&cli.StringFlag{
-								Name:    "rootfs",
-								Aliases: []string{"r"},
-								Usage:   i18n.T("cli.vmm.rootfs"),
-							},
-							&cli.StringFlag{
-								Name:  "mem",
-								Usage: i18n.T("cli.vmm.mem"),
-								Value: "1024",
-							},
-							&cli.IntFlag{
-								Name:  "cpus",
-								Usage: i18n.T("cli.vmm.cpus"),
-								Value: 2,
-							},
-							&cli.BoolFlag{
-								Name:    "net",
-								Aliases: []string{"network"},
-								Usage:   i18n.T("cli.vmm.net"),
-							},
-							&cli.StringFlag{
-								Name:  "tap",
-								Usage: i18n.T("cli.vmm.tap"),
-								Value: "litevm-tap0",
-							},
-							&cli.StringFlag{
-								Name:  "host-ip",
-								Usage: i18n.T("cli.vmm.host_ip"),
-								Value: "172.16.0.1",
-							},
-							&cli.StringFlag{
-								Name:  "guest-ip",
-								Usage: i18n.T("cli.vmm.guest_ip"),
-								Value: "172.16.0.2",
-							},
-							&cli.StringFlag{
-								Name:  "kernel-args",
-								Usage: i18n.T("cli.vmm.kernel_args"),
-							},
+					Flags: []cli.Flag{
+						&cli.StringFlag{
+							Name:    "kernel",
+							Aliases: []string{"k"},
+							Usage:   i18n.T("cli.vmm.kernel"),
 						},
+						&cli.StringFlag{
+							Name:    "rootfs",
+							Aliases: []string{"r"},
+							Usage:   i18n.T("cli.vmm.rootfs"),
+						},
+						&cli.StringFlag{
+							Name:  "mem",
+							Usage: i18n.T("cli.vmm.mem"),
+							Value: "1024",
+						},
+						&cli.IntFlag{
+							Name:  "cpus",
+							Usage: i18n.T("cli.vmm.cpus"),
+							Value: 2,
+						},
+						&cli.BoolFlag{
+							Name:    "net",
+							Aliases: []string{"network"},
+							Usage:   i18n.T("cli.vmm.net"),
+						},
+						&cli.StringFlag{
+							Name:  "tap",
+							Usage: i18n.T("cli.vmm.tap"),
+							Value: "litevm-tap0",
+						},
+						&cli.StringFlag{
+							Name:  "host-ip",
+							Usage: i18n.T("cli.vmm.host_ip"),
+							Value: "172.16.0.1",
+						},
+						&cli.StringFlag{
+							Name:  "guest-ip",
+							Usage: i18n.T("cli.vmm.guest_ip"),
+							Value: "172.16.0.2",
+						},
+						&cli.StringFlag{
+							Name:  "kernel-args",
+							Usage: i18n.T("cli.vmm.kernel_args"),
+						},
+						&cli.StringSliceFlag{
+							Name:  "drive",
+							Usage: i18n.T("cli.vmm.drive"),
+						},
+						&cli.StringFlag{
+							Name:  "cdrom",
+							Usage: i18n.T("cli.vmm.cdrom"),
+						},
+						&cli.StringFlag{
+							Name:  "hd",
+							Usage: i18n.T("cli.vmm.hd"),
+						},
+						&cli.StringFlag{
+							Name:  "balloon",
+							Usage: i18n.T("cli.vmm.balloon"),
+						},
+						&cli.BoolFlag{
+							Name:  "balloon-deflate-on-oom",
+							Usage: i18n.T("cli.vmm.balloon_oom"),
+						},
+						&cli.StringFlag{
+							Name:  "vsock",
+							Usage: i18n.T("cli.vmm.vsock"),
+						},
+					},
 					Action: func(cCtx *cli.Context) error {
 						if !cCtx.IsSet("kernel") && !cCtx.IsSet("rootfs") {
-							return cli.ShowCommandHelp(cCtx, "run")
+							// Show full help for 'run' subcommand
+							for _, cmd := range cCtx.App.Commands {
+								if cmd.HasName("vmm") {
+									for _, sub := range cmd.Subcommands {
+										if sub.HasName("run") {
+											templ := sub.CustomHelpTemplate
+											if templ == "" {
+												templ = `NAME:
+   {{.HelpName}} - {{.Usage}}
+
+USAGE:
+   {{.UsageText}}
+
+OPTIONS:
+{{range .VisibleFlags}}{{.}}
+{{end}}`
+											}
+											cli.HelpPrinter(cCtx.App.Writer, templ, sub)
+											return nil
+										}
+									}
+								}
+							}
+							return nil
 						}
 
 						cfg := vmm.DefaultConfig()
@@ -225,6 +273,79 @@ func main() {
 							cfg.TapDevice = cCtx.String("tap")
 							cfg.HostIP = cCtx.String("host-ip")
 							cfg.GuestIP = cCtx.String("guest-ip")
+
+							// --drive: attach extra block devices (raw/qcow2/vmdk/vhd/iso)
+							if drives := cCtx.StringSlice("drive"); len(drives) > 0 {
+								for i, driveStr := range drives {
+									driveCfg, err := parseDriveArg(driveStr, i+1)
+									if err != nil {
+										return fmt.Errorf("invalid --drive %q: %w", driveStr, err)
+									}
+									// Auto-detect and convert non-raw formats
+									format := vmm.DetectDiskFormat(driveCfg.Path)
+									logger.Info("Drive %d: detected format %s for %s", i+1, format, filepath.Base(driveCfg.Path))
+									if format != vmm.DiskFormatRaw && format != vmm.DiskFormatISO {
+										rawPath, cleanup, err := vmm.ConvertToRaw(driveCfg.Path, format)
+										if err != nil {
+											return fmt.Errorf("failed to convert drive %s: %w", driveCfg.Path, err)
+										}
+										defer cleanup()
+										driveCfg.Path = rawPath
+									}
+									cfg.ExtraDrives = append(cfg.ExtraDrives, driveCfg)
+								}
+							}
+
+							// --cdrom: attach ISO as read-only block device
+							if cdrom := cCtx.String("cdrom"); cdrom != "" {
+								if _, err := os.Stat(cdrom); os.IsNotExist(err) {
+									return fmt.Errorf("ISO file not found: %s", cdrom)
+								}
+								format := vmm.DetectDiskFormat(cdrom)
+								if format != vmm.DiskFormatISO {
+									logger.Warn("File %s does not appear to be an ISO image (detected: %s)", cdrom, format)
+								}
+								cfg.ExtraDrives = append(cfg.ExtraDrives, vmm.DriveConfig{
+									ID:       fmt.Sprintf("cdrom%d", len(cfg.ExtraDrives)+1),
+									Path:     cdrom,
+									ReadOnly: true,
+									IsRoot:   false,
+								})
+							}
+
+							// --hd: attach an existing virtual disk file (not auto-mounted in Linux)
+							if hd := cCtx.String("hd"); hd != "" {
+								if _, err := os.Stat(hd); os.IsNotExist(err) {
+									return fmt.Errorf("virtual disk file not found: %s", hd)
+								}
+								cfg.ExtraDrives = append(cfg.ExtraDrives, vmm.DriveConfig{
+									ID:       "hd0",
+									Path:     hd,
+									ReadOnly: false,
+									IsRoot:   false,
+								})
+							}
+
+							// --balloon: enable virtio-balloon
+							if balloon := cCtx.String("balloon"); balloon != "" {
+								var amountMB int64
+								if _, err := fmt.Sscanf(balloon, "%d", &amountMB); err != nil || amountMB <= 0 {
+									return fmt.Errorf("invalid --balloon size: %s (use a number in MB)", balloon)
+								}
+								cfg.Balloon = &vmm.BalloonConfig{
+									AmountMib:    amountMB,
+									DeflateOnOom: cCtx.Bool("balloon-deflate-on-oom"),
+								}
+							}
+
+							// --vsock: enable virtio-vsock
+							if vsockStr := cCtx.String("vsock"); vsockStr != "" {
+								vsockCfg, err := parseVsockArg(vsockStr)
+								if err != nil {
+									return fmt.Errorf("invalid --vsock %q: %w", vsockStr, err)
+								}
+								cfg.Vsock = vsockCfg
+							}
 
 							if cfg.EnableNet && !permission.IsRoot() && !vmm.TapDeviceAccessible(cfg.TapDevice) {
 								return fmt.Errorf("network mode requires root or pre-created TAP device\nPlease run: sudo %s vmm setup-network", os.Args[0])
@@ -870,4 +991,65 @@ func runDownload() error {
 	}
 	fmt.Println(i18n.T("cli.download.opened"))
 	return nil
+}
+
+// parseDriveArg parses a --drive argument in the format: path[:id][:ro]
+// Examples:
+//
+//	/data/disk.raw           -> {Path: "/data/disk.raw", ID: "drive1", ReadOnly: false}
+//	/data/disk.raw:mydata    -> {Path: "/data/disk.raw", ID: "mydata", ReadOnly: false}
+//	/data/disk.raw:data:ro   -> {Path: "/data/disk.raw", ID: "data", ReadOnly: true}
+func parseDriveArg(arg string, index int) (vmm.DriveConfig, error) {
+	parts := strings.Split(arg, ":")
+	if len(parts) == 0 || parts[0] == "" {
+		return vmm.DriveConfig{}, fmt.Errorf("empty drive path")
+	}
+
+	cfg := vmm.DriveConfig{
+		Path: parts[0],
+	}
+
+	if len(parts) >= 2 && parts[1] != "ro" {
+		cfg.ID = parts[1]
+	} else {
+		cfg.ID = fmt.Sprintf("drive%d", index)
+	}
+
+	for _, part := range parts[1:] {
+		if part == "ro" {
+			cfg.ReadOnly = true
+		}
+	}
+
+	return cfg, nil
+}
+
+// parseVsockArg parses a --vsock argument in the format: cid[:uds_path]
+// Examples:
+//
+//	3                           -> {GuestCID: 3, UDSPath: "/tmp/litevm-vsock.sock"}
+//	5:/run/litevm/vsock.sock    -> {GuestCID: 5, UDSPath: "/run/litevm/vsock.sock"}
+func parseVsockArg(arg string) (*vmm.VsockConfig, error) {
+	parts := strings.Split(arg, ":")
+	if len(parts) == 0 || parts[0] == "" {
+		return nil, fmt.Errorf("empty vsock CID")
+	}
+
+	cid, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid CID %q: must be a number >= 3", parts[0])
+	}
+	if cid < 3 {
+		return nil, fmt.Errorf("CID must be >= 3, got %d", cid)
+	}
+
+	udsPath := "/tmp/litevm-vsock.sock"
+	if len(parts) >= 2 && parts[1] != "" {
+		udsPath = parts[1]
+	}
+
+	return &vmm.VsockConfig{
+		GuestCID: cid,
+		UDSPath:  udsPath,
+	}, nil
 }
